@@ -352,7 +352,42 @@ function render() {
   applyFilters();
   renderFloorplanPinned();
   renderAllPhotosPinned();
+  renderNotesPinned();
 }
+
+let notesSaveTimer = null;
+
+function renderNotesPinned() {
+  const section = document.getElementById("notesPinned");
+  const textarea = document.getElementById("notesArea");
+  const status = document.getElementById("notesStatus");
+  if (!section || !textarea) return;
+  section.hidden = false;
+  const bucket = getBucket();
+  const value = typeof bucket.notes === "string" ? bucket.notes : "";
+  if (document.activeElement !== textarea) {
+    textarea.value = value;
+    if (status) status.textContent = "";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {});
+
+const notesAreaEl = document.getElementById("notesArea");
+notesAreaEl?.addEventListener("input", () => {
+  const bucket = getBucket();
+  bucket.notes = notesAreaEl.value;
+  const status = document.getElementById("notesStatus");
+  if (status) status.textContent = "Saving…";
+  if (notesSaveTimer) clearTimeout(notesSaveTimer);
+  notesSaveTimer = setTimeout(async () => {
+    await save();
+    if (status) status.textContent = "Saved";
+    setTimeout(() => {
+      if (status && status.textContent === "Saved") status.textContent = "";
+    }, 1200);
+  }, 400);
+});
 
 function collectAllUniquePhotos() {
   const seen = new Set();
@@ -747,6 +782,40 @@ function safeName(s) {
     .replace(/[\\/:*?"<>|]+/g, "_")
     .replace(/\s+/g, " ")
     .trim() || "untitled";
+}
+
+async function reencodeAsPng(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = async () => {
+      try {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const canvas =
+          typeof OffscreenCanvas !== "undefined"
+            ? new OffscreenCanvas(w, h)
+            : Object.assign(document.createElement("canvas"), {
+                width: w,
+                height: h,
+              });
+        canvas.getContext("2d").drawImage(img, 0, 0);
+        const blob = canvas.convertToBlob
+          ? await canvas.convertToBlob({ type: "image/png" })
+          : await new Promise((r) => canvas.toBlob(r, "image/png"));
+        const reader = new FileReader();
+        reader.onload = () => {
+          const m = String(reader.result).match(/^data:image\/png;base64,(.*)$/);
+          resolve(m ? m[1] : null);
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      } catch (_) {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
 }
 
 function dataUrlToBytes(dataUrl) {
@@ -1728,10 +1797,34 @@ async function callClaudeForTags(item) {
   if (!m) throw new Error("no image data");
   let mediaType = m[1];
   if (mediaType === "image/jpg") mediaType = "image/jpeg";
-  const base64 = m[2];
+  let base64 = m[2];
+
+  // Anthropic only accepts jpeg/png/gif/webp. Re-encode anything else (e.g.
+  // bmp images embedded in DOCX) to PNG via a canvas so the call doesn't 400.
+  const ALLOWED = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+  ]);
+  if (!ALLOWED.has(mediaType)) {
+    const reencoded = await reencodeAsPng(dataUrl);
+    if (reencoded) {
+      mediaType = "image/png";
+      base64 = reencoded;
+    } else {
+      throw new Error(`Unsupported image type for Claude: ${mediaType}`);
+    }
+  }
 
   const cats = getBucket().categories;
   const tagList = cats.map((c) => c.title);
+
+  console.debug(
+    "[EPC] Claude tag call:",
+    "mediaType=", mediaType,
+    "url=", item.url
+  );
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
