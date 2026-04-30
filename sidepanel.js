@@ -1662,62 +1662,6 @@ importInput.addEventListener("change", async (e) => {
   closeImportModal();
 });
 
-$("#importUrlBtn").addEventListener("click", async () => {
-  const url = prompt("Paste an image or PDF URL:");
-  if (!url) return;
-  try {
-    const photos = await importFromUrl(url.trim());
-    if (photos.length) {
-      showDetected([...(detected || []), ...photos]);
-    } else {
-      alert("No images found at that URL.");
-    }
-  } catch (err) {
-    console.error(err);
-    alert(`URL import failed: ${err?.message || err}`);
-  }
-});
-
-async function importFromUrl(url) {
-  if (!/^https?:|^data:/.test(url)) {
-    throw new Error("Only http(s) and data URLs are supported.");
-  }
-  const res = await new Promise((resolve) =>
-    chrome.runtime.sendMessage({ type: "fetchUrlBytes", url }, resolve)
-  );
-  if (!res?.ok) throw new Error(res?.error || "fetch failed");
-  const ct = (res.contentType || "").toLowerCase();
-  const cleanName =
-    decodeURIComponent((url.split("?")[0].split("/").pop() || "remote")).slice(
-      0,
-      120
-    );
-
-  if (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(cleanName)) {
-    return [
-      {
-        url,
-        dataUrl: res.dataUrl,
-        pageTitle: cleanName,
-        alt: "",
-        section: "URL import",
-      },
-    ];
-  }
-
-  if (ct === "application/pdf" || /\.pdf$/i.test(cleanName)) {
-    const bin = atob(res.dataUrl.split(",")[1] || "");
-    const data = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
-    const file = new File([data], cleanName.endsWith(".pdf") ? cleanName : cleanName + ".pdf", {
-      type: "application/pdf",
-    });
-    return extractFromPdf(file);
-  }
-
-  throw new Error(`Unsupported content type: ${ct || "unknown"}`);
-}
-
 async function extractFromFile(file) {
   const name = file.name.toLowerCase();
   if (file.type.startsWith("image/")) {
