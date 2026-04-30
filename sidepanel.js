@@ -351,6 +351,37 @@ function render() {
   rebuildTagFilter();
   applyFilters();
   renderFloorplanPinned();
+  renderAllPhotosPinned();
+}
+
+function collectAllUniquePhotos() {
+  const seen = new Set();
+  const out = [];
+  for (const cat of getBucket().categories) {
+    for (const photo of cat.photos) {
+      const id = photoIdentity(photo);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(photo);
+    }
+  }
+  return out;
+}
+
+function renderAllPhotosPinned() {
+  const section = document.getElementById("allPhotosPinned");
+  const countEl = document.getElementById("allPhotosCount");
+  const reviewBtn = document.getElementById("allPhotosReview");
+  if (!section || !countEl || !reviewBtn) return;
+  const all = collectAllUniquePhotos();
+  countEl.textContent = String(all.length);
+  reviewBtn.disabled = all.length === 0;
+  section.hidden = false;
+  reviewBtn.onclick = () => {
+    const items = collectAllUniquePhotos();
+    if (!items.length) return;
+    openLightbox(items, 0);
+  };
 }
 
 function rebuildAssessmentBar() {
