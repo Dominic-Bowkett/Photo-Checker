@@ -1739,7 +1739,9 @@ async function callClaudeForTags(item) {
   });
   if (!resp.ok) {
     const errText = await resp.text();
-    throw new Error(`HTTP ${resp.status}: ${errText.slice(0, 300)}`);
+    const err = new Error(`HTTP ${resp.status}: ${errText.slice(0, 300)}`);
+    err.status = resp.status;
+    throw err;
   }
   const data = await resp.json();
   const text = data?.content?.[0]?.text || "";
@@ -1794,7 +1796,13 @@ async function autoTagItem(item, btn) {
     setTimeout(() => (btn.textContent = wasLabel), 1800);
   } catch (err) {
     console.error("Auto-tag failed", err);
-    alert("Auto-tag failed: " + (err?.message || err));
+    if (err?.status === 401 || err?.status === 403) {
+      alert(
+        "Claude rejected your API key. Open ⚙ Settings and paste a valid key (from console.anthropic.com → API keys)."
+      );
+    } else {
+      alert("Auto-tag failed: " + (err?.message || err));
+    }
     btn.textContent = wasLabel;
   } finally {
     btn.disabled = false;
@@ -1866,6 +1874,26 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
     } catch (err) {
       console.warn("Auto-tag failed for item", items[i]?.url, err);
       failures++;
+      if (err?.status === 401 || err?.status === 403) {
+        await save();
+        detectedAutoTagBtn.disabled = false;
+        detectedAutoTagBtn.textContent = wasLabel;
+        alert(
+          `Stopped: Claude rejected your API key (${err.status}). Open ⚙ Settings and paste a valid key, then try again.`
+        );
+        return;
+      }
+      if (err?.status === 429) {
+        await save();
+        detectedAutoTagBtn.disabled = false;
+        detectedAutoTagBtn.textContent = wasLabel;
+        alert(
+          `Stopped: Claude returned 429 (rate limited) on photo ${
+            i + 1
+          }/${items.length}. Wait a minute and run Auto‑tag all again — already-tagged photos will be skipped.`
+        );
+        return;
+      }
     }
     await save();
     if (i < items.length - 1) await new Promise((r) => setTimeout(r, 250));
