@@ -88,6 +88,41 @@
       ></textarea>
     </section>
 
+    <section id="siteNotesPinned" class="pinned" hidden>
+      <header>
+        <h2>Site notes &amp; checks</h2>
+        <div class="pinned-actions">
+          <button id="siteNotesImport" class="ai-action" title="Fetch a site notes PDF and let Claude extract the data" hidden>
+            ✨ Import PDF
+          </button>
+          <span id="siteNotesStatus" class="pinned-status"></span>
+        </div>
+      </header>
+      <div class="site-notes-body">
+        <div id="siteNotesEmpty" class="pinned-empty">
+          Set a Claude API key in ⚙ Settings, then click <strong>Import PDF</strong>
+          to pull a site notes URL in for automated checks.
+        </div>
+        <div id="siteNotesContent" hidden>
+          <div class="site-notes-source">
+            <span id="siteNotesSrcLabel"></span>
+            <button id="siteNotesReimport" title="Re-run the import">↻</button>
+          </div>
+          <details class="site-notes-extract">
+            <summary>Extracted fields</summary>
+            <pre id="siteNotesExtracted"></pre>
+          </details>
+          <h3 class="snh">Assessor checks</h3>
+          <ul id="siteNotesChecklist"></ul>
+          <h3 class="snh">Student feedback</h3>
+          <textarea id="siteNotesFeedback" rows="8"></textarea>
+          <div class="site-notes-actions">
+            <button id="siteNotesCopy" class="primary">Copy feedback</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section id="allPhotosPinned" class="pinned" hidden>
       <header>
         <h2>All photos <span id="allPhotosCount">0</span></h2>
@@ -154,6 +189,34 @@
         </div>
       </li>
     </template>
+
+    <div id="siteNotesModal" class="modal" hidden>
+      <div class="modal-card">
+        <header>
+          <h2>Import site notes PDF</h2>
+          <button id="siteNotesModalClose" title="Close">×</button>
+        </header>
+        <div class="settings-body">
+          <label for="siteNotesUrl">PDF URL</label>
+          <input
+            id="siteNotesUrl"
+            type="url"
+            placeholder="https://… site-notes.pdf"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="settings-hint">
+            The PDF is fetched, parsed locally, then sent to Claude for
+            extraction and rule checks. Existing site notes for this
+            assessment will be replaced.
+          </p>
+        </div>
+        <footer>
+          <button id="siteNotesCancel">Cancel</button>
+          <button id="siteNotesGo" class="primary">Import &amp; check</button>
+        </footer>
+      </div>
+    </div>
 
     <div id="floorplanCheckModal" class="modal" hidden>
       <div class="modal-card wide">

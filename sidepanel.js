@@ -366,6 +366,7 @@ function render() {
   renderFloorplanPinned();
   renderAllPhotosPinned();
   renderNotesPinned();
+  renderSiteNotesPinned();
 }
 
 let notesSaveTimer = null;
@@ -2429,5 +2430,376 @@ $("#floorplanCheckCopy").addEventListener("click", async () => {
     alert(text);
   }
 });
+
+// ---- Site notes import + assessor checklist -----------------------------
+const siteNotesPinned = $("#siteNotesPinned");
+const siteNotesEmpty = $("#siteNotesEmpty");
+const siteNotesContent = $("#siteNotesContent");
+const siteNotesImportBtn = $("#siteNotesImport");
+const siteNotesStatus = $("#siteNotesStatus");
+const siteNotesSrcLabel = $("#siteNotesSrcLabel");
+const siteNotesExtracted = $("#siteNotesExtracted");
+const siteNotesChecklist = $("#siteNotesChecklist");
+const siteNotesFeedback = $("#siteNotesFeedback");
+const siteNotesModal = $("#siteNotesModal");
+const siteNotesUrlEl = $("#siteNotesUrl");
+
+let siteNotesFeedbackTimer = null;
+
+function renderSiteNotesPinned() {
+  if (!siteNotesPinned) return;
+  siteNotesPinned.hidden = false;
+  siteNotesImportBtn.hidden = !settings?.claudeApiKey;
+  const sn = getBucket().siteNotes;
+  if (!sn) {
+    siteNotesContent.hidden = true;
+    siteNotesEmpty.hidden = false;
+    return;
+  }
+  siteNotesEmpty.hidden = true;
+  siteNotesContent.hidden = false;
+  siteNotesSrcLabel.textContent = sn.url || "(local PDF)";
+  siteNotesExtracted.textContent = JSON.stringify(sn.extracted || {}, null, 2);
+  // Checklist
+  siteNotesChecklist.innerHTML = "";
+  const ticks = sn.ticks || {};
+  for (const item of sn.checklist || []) {
+    const li = document.createElement("li");
+    li.dataset.severity = item.severity || "info";
+    if (ticks[item.id]) li.classList.add("done");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!ticks[item.id];
+    cb.addEventListener("change", async () => {
+      sn.ticks = sn.ticks || {};
+      sn.ticks[item.id] = cb.checked;
+      li.classList.toggle("done", cb.checked);
+      await save();
+    });
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = item.label;
+    li.appendChild(cb);
+    li.appendChild(label);
+    siteNotesChecklist.appendChild(li);
+  }
+  if (document.activeElement !== siteNotesFeedback) {
+    siteNotesFeedback.value = sn.studentFeedback || "";
+  }
+}
+
+siteNotesFeedback?.addEventListener("input", () => {
+  const sn = getBucket().siteNotes;
+  if (!sn) return;
+  sn.studentFeedback = siteNotesFeedback.value;
+  if (siteNotesFeedbackTimer) clearTimeout(siteNotesFeedbackTimer);
+  siteNotesFeedbackTimer = setTimeout(() => save(), 400);
+});
+
+$("#siteNotesCopy")?.addEventListener("click", async () => {
+  const text = siteNotesFeedback.value;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = $("#siteNotesCopy");
+    const was = btn.textContent;
+    btn.textContent = "Copied";
+    setTimeout(() => (btn.textContent = was), 1200);
+  } catch (_) {
+    alert(text);
+  }
+});
+
+siteNotesImportBtn?.addEventListener("click", () => {
+  if (!settings.claudeApiKey) {
+    alert("Set your Claude API key in Settings first (gear icon).");
+    return;
+  }
+  siteNotesUrlEl.value = "";
+  siteNotesModal.hidden = false;
+  setTimeout(() => siteNotesUrlEl.focus(), 0);
+});
+$("#siteNotesModalClose")?.addEventListener(
+  "click",
+  () => (siteNotesModal.hidden = true)
+);
+$("#siteNotesCancel")?.addEventListener(
+  "click",
+  () => (siteNotesModal.hidden = true)
+);
+$("#siteNotesReimport")?.addEventListener("click", () => {
+  const sn = getBucket().siteNotes;
+  if (!sn?.url) return;
+  siteNotesUrlEl.value = sn.url;
+  siteNotesModal.hidden = false;
+});
+siteNotesUrlEl?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("#siteNotesGo").click();
+  }
+});
+
+$("#siteNotesGo")?.addEventListener("click", async () => {
+  const url = siteNotesUrlEl.value.trim();
+  if (!url) return;
+  siteNotesModal.hidden = true;
+  await runSiteNotesImport(url);
+});
+
+async function runSiteNotesImport(url) {
+  if (!settings.claudeApiKey) {
+    alert("Set your Claude API key in Settings first (gear icon).");
+    return;
+  }
+  siteNotesStatus.textContent = "Fetching PDF…";
+  let blob;
+  try {
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    blob = await res.blob();
+  } catch (err) {
+    siteNotesStatus.textContent = "Fetch failed: " + (err?.message || err);
+    return;
+  }
+
+  siteNotesStatus.textContent = "Reading PDF text…";
+  let text;
+  try {
+    text = await extractPdfText(blob);
+  } catch (err) {
+    siteNotesStatus.textContent = "PDF read failed: " + (err?.message || err);
+    return;
+  }
+  if (!text || text.trim().length < 80) {
+    siteNotesStatus.textContent =
+      "PDF contained very little extractable text — is it a scanned image PDF?";
+    return;
+  }
+
+  siteNotesStatus.textContent = "Asking Claude…";
+  let result;
+  try {
+    result = await callClaudeForSiteNotes(text);
+  } catch (err) {
+    siteNotesStatus.textContent =
+      "Claude call failed: " + (err?.message || err);
+    return;
+  }
+
+  const photoSummary = summarisePhotosForChecks();
+  result.checklist = mergePhotoFlags(result.checklist || [], photoSummary);
+
+  const bucket = getBucket();
+  bucket.siteNotes = {
+    url,
+    importedAt: Date.now(),
+    extracted: result.extracted || {},
+    checklist: result.checklist || [],
+    studentFeedback: result.studentFeedback || "",
+    ticks: bucket.siteNotes?.url === url ? bucket.siteNotes.ticks || {} : {},
+  };
+  await save();
+  render();
+  siteNotesStatus.textContent = "Done.";
+  setTimeout(() => {
+    if (siteNotesStatus.textContent === "Done.") {
+      siteNotesStatus.textContent = "";
+    }
+  }, 1500);
+}
+
+async function extractPdfText(blob) {
+  const pdfjsLib = window.pdfjsLib;
+  if (!pdfjsLib) throw new Error("pdf.js not loaded");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
+    "vendor/pdf.worker.js"
+  );
+  const data = new Uint8Array(await blob.arrayBuffer());
+  const pdf = await pdfjsLib.getDocument({ data, disableFontFace: true })
+    .promise;
+  const out = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    const pageText = tc.items
+      .map((it) => ("str" in it ? it.str : ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    out.push(`--- Page ${p} ---\n${pageText}`);
+    page.cleanup();
+  }
+  return out.join("\n\n");
+}
+
+function summarisePhotosForChecks() {
+  const summary = {};
+  for (const cat of getBucket().categories) {
+    summary[cat.title] = cat.photos.length;
+  }
+  return summary;
+}
+
+function mergePhotoFlags(checklist, photoSummary) {
+  // Add photo-availability colour to existing items where they reference a tag
+  // in the bucket. Only annotates labels — keeps the assessor in control.
+  return checklist.map((item) => {
+    const lc = (item.label || "").toLowerCase();
+    const refs = Object.entries(photoSummary).filter(([title]) =>
+      lc.includes(title.toLowerCase())
+    );
+    if (refs.length) {
+      const counts = refs
+        .map(([t, n]) => `${t}: ${n} photo${n === 1 ? "" : "s"}`)
+        .join("; ");
+      return { ...item, label: `${item.label} (currently — ${counts})` };
+    }
+    return item;
+  });
+}
+
+async function callClaudeForSiteNotes(text) {
+  const tagList = getBucket().categories.map((c) => c.title);
+  const photoSummary = summarisePhotosForChecks();
+  const photoSummaryText = Object.entries(photoSummary)
+    .map(([t, n]) => `${t}: ${n}`)
+    .join(", ");
+
+  const SYSTEM = [
+    "You are an EPC / RdSAP site notes auditor for UK EPC assessor trainees.",
+    "You receive the raw text of an assessor's site notes PDF and the names",
+    "of available photo evidence tags in the side panel.",
+    "",
+    "Return ONLY a JSON object with this exact shape:",
+    '{ "extracted": {...}, "checklist": [{"id": "kebab-id", "label": "...", "severity": "must|should|info"}], "studentFeedback": "..." }',
+    "",
+    "FIELDS to populate in `extracted` (omit any you cannot find):",
+    "- detachmentType, builtForm, propertyType, ageRangeMain, ageRangeExtensions",
+    "- electricMeter:{type, smart, exportCapable, evidenceMentioned}",
+    "- gasMeter:{present, smart}",
+    "- conservatory:{present, separated, glazingPercent, perimeter}",
+    "- wallConstruction:{type, asBuilt, insulationType, thicknessMain, thicknessExtensions}",
+    "- partyWall:{type}",
+    "- floor:{construction, hasBasement, suspendedTimberAirVents, insulationType, asBuilt}",
+    "- windows:{ageRange, glazingGapMm, thermalBar, evidence, dimensions}",
+    "- ventilation:{type, openFlues, closedFlues, boilerFlues, otherFlues, fluelessGasFires, extractFans, passiveVents}",
+    "- draftLobby",
+    "- renewables:[{type, kwp, mcsCert, isExportCapable}]",
+    "- unheatedRooms:[]",
+    "- openChimneys",
+    "- lightFittings:{led, cfl, halogen, incandescent, total}",
+    "- roofRooms:{present, type, accessLimitation}",
+    "- loftAccess:{accessible, hatchVisible}",
+    "- flatRoof:{construction, asBuilt}",
+    "- slopingCeiling:{construction, asBuilt}",
+    "- doors:{draftProof, doubleGlazed}",
+    "- primaryHeating:{dataSource, model, fuel, secondaryHeating}",
+    "- heatingControls:[]",
+    "- centralHeatingPump:{age, eeiPresent}",
+    "- waterHeating:{type, immersion, dualImmersion, cylinderThermostat, cylinderInsulationThicknessMm}",
+    "- recommendedMeasures:[]",
+    "- addendum15Selected",
+    "",
+    "RULES — generate a checklist item (severity must|should|info) when ANY of:",
+    "- Electric meter is dual / Economy 7 / 24 etc with no clear photo or paperwork evidence",
+    "- Electric meter smart status mentioned but export capability not confirmed",
+    "- Gas smart meter status missing",
+    "- Conservatory present but glazing percentage / perimeter not stated",
+    "- Wall insulation type is anything other than 'As Built' (must explain why)",
+    "- Wall insulation 'Filled Cavity' selected with no drill-hole / paperwork evidence noted",
+    "- Wall thickness measurements missing for main property or any extension",
+    "- Party wall 'Other' selected without photo evidence",
+    "- Floor construction mentions basement (always flag for further investigation)",
+    "- Floor is suspended timber but no sub-floor air vent or timber floor photo noted",
+    "- Floor insulation is anything other than 'As Built' (must explain why); 'Unknown' only when evidence conflicts",
+    "- Windows 2002-2021 and no thermal bar / paperwork evidence",
+    "- Windows 2022+ without paperwork or build date justification",
+    "- Windows pre-2002 without datestamp / paperwork; if Unknown, glazing gap measurement & photo",
+    "- Window dimensions look anomalous (should be in metres, e.g. 0.89; flag values > 5 or < 0.3)",
+    "- Ventilation anything other than 'natural'",
+    "- Open flues >= 1 (verify chimney / fireplace evidence; ≤ 200mm diameter)",
+    "- Closed flues — verify if log burner / closed room heater present",
+    "- Boiler flues > 0 (these are solid-fuel boiler flues, not gas; flag)",
+    "- Other flues > 0 (gas room heaters)",
+    "- Flueless gas fires > 0 without photo",
+    "- Extract fans >= 1 without photo",
+    "- Passive vents > 0 (often confused with air bricks / trickle vents — verify it's a passive stack)",
+    "- Draft lobby = yes without photo",
+    "- Renewables present without MCS cert paperwork or photo; verify kWp; flag > 2 systems",
+    "- Any unheated rooms (ask assessor to confirm)",
+    "- Open chimney without 'up the chimney' photo evidence",
+    "- Lightbulb mix: at least one LED, one CFL and one Incandescent example photo if any of those are counted (>=1)",
+    "- Roof rooms = yes: confirm Type 1 / Type 2 / detailed method; for Type 1/2 confirm loft access limitation",
+    "- No loft access selected without photo proving no hatch",
+    "- Flat roof or sloping ceiling marked 'Unknown' (RdSAP convention is As Built)",
+    "- Doors — draft-proofing photo if not double-glazed",
+    "- Primary heating data source: if photo shows model/serial/GC tag then PCDF should be used; flag if Manual",
+    "- Storage / panel heaters may be Manual — that's expected",
+    "- Heating controls — confirm photos cover every control selected",
+    "- Central heating pump age: should be Unknown if no photo; pre-2012 if no EEI; 2013+ if EEI on pump",
+    "- Secondary heating verification (refer to https://support.energy-trust.co.uk/article/understanding-secondary-heating)",
+    "- Water heating: immersion single vs dual photo evidence",
+    "- Cylinder thermostat photo if 'Yes' selected",
+    "- Cylinder insulation thickness measurement photo if cylinder is present",
+    "- Photovoltaics in recommended measures but Addendum 15 not selected",
+    "",
+    "STUDENT FEEDBACK should be a friendly, plain-English message the trainee can paste:",
+    "list each query in a bulleted form, ordered most important first, ending with",
+    "a short sign-off like 'Thanks!'.",
+    "",
+    "Available photo tags in the side panel (count): " + photoSummaryText,
+    "Use the EXACT tag names where applicable so the assessor can cross-reference.",
+  ].join("\n");
+
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": settings.claudeApiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: settings.claudeModel || "claude-sonnet-4-6",
+      max_tokens: 4000,
+      system: SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content:
+            "Site notes PDF text follows. Extract and check.\n\n" +
+            text.slice(0, 60000),
+        },
+      ],
+    }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    const err = new Error(`HTTP ${resp.status}: ${errText.slice(0, 300)}`);
+    err.status = resp.status;
+    throw err;
+  }
+  const data = await resp.json();
+  const out = data?.content?.[0]?.text || "";
+  const objMatch = out.match(/\{[\s\S]*\}/);
+  if (!objMatch) throw new Error("Could not parse Claude response");
+  const parsed = JSON.parse(objMatch[0]);
+  // Normalise checklist items so each has an id.
+  parsed.checklist = (parsed.checklist || []).map((it, i) => ({
+    id:
+      it.id ||
+      String(it.label || `item-${i}`)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 80),
+    label: it.label || "",
+    severity: ["must", "should", "info"].includes(it.severity)
+      ? it.severity
+      : "info",
+  }));
+  return parsed;
+}
 
 loadSettings().then(load);
