@@ -43,6 +43,9 @@
       <button id="importBtn" title="Extract images from a PDF or Word file">
         Import file
       </button>
+      <button id="importUrlBtn" title="Fetch a PDF or image from a URL">
+        From URL
+      </button>
     </div>
 
     <section id="floorplanPinned" class="pinned" hidden>
@@ -122,7 +125,10 @@
       <button id="lightboxPrev" title="Previous (←)" aria-label="Previous">‹</button>
       <img id="lightboxImg" alt="" />
       <button id="lightboxNext" title="Next (→)" aria-label="Next">›</button>
-      <div id="lightboxCaption"></div>
+      <div id="lightboxBottom">
+        <div id="lightboxCaption"></div>
+        <div id="lightboxTags" hidden></div>
+      </div>
     </div>
 
     <script src="vendor/pdf.js"></script>

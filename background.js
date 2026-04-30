@@ -259,4 +259,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       );
     return true;
   }
+  if (msg?.type === "fetchUrlBytes" && typeof msg.url === "string") {
+    fetch(msg.url, { credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        sendResponse({ ok: true, dataUrl, contentType: blob.type });
+      })
+      .catch((err) =>
+        sendResponse({ ok: false, error: err?.message || String(err) })
+      );
+    return true;
+  }
 });

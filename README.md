@@ -50,13 +50,21 @@ Above the tag list there is a **View** dropdown and a search box.
 - Type in the search box to keep only tags whose title, guidance, photo
   source page or filename matches.
 
-### Import from PDF or Word
+### Import from PDF, Word, or URL
 
-Click **Import file** in the filter bar and pick one or more `.pdf`,
-`.docx`, or image files. Embedded images are extracted (PDF via PDF.js,
-DOCX by reading `word/media/*` straight out of the ZIP) and appear in the
-**Detected on page** strip, where you can drag them into a tag or use
-**Send all**.
+Click **Import file** to pick one or more `.pdf`, `.docx`, or image
+files. PDFs are rasterised one page per image via PDF.js (more reliable
+than embedded‑image extraction across colour spaces and image masks).
+DOCX images are read straight out of `word/media/*` in the ZIP.
+
+Click **From URL** to paste a remote URL. Image URLs (including AWS
+signed S3 links) are added straight to the detected strip. PDF URLs are
+fetched then rasterised page‑by‑page.
+
+Imported items appear in the **Detected on page** strip, where you can
+drag them into a tag, use **Send all**, or click a thumbnail to open the
+lightbox and tag with one‑click pills (← / → step through items so you
+can rip through tagging quickly).
 
 ### Auto-scan an assessment record
 

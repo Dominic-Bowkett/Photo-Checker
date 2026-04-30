@@ -474,19 +474,19 @@ function rebuildAssignDropdown() {
 }
 
 function showDetected(photos) {
-  detected = photos;
+  detected = photos.map((p) => ({ ...p, detectedId: p.detectedId || uid() }));
   rebuildAssignDropdown();
-  detectedCountEl.textContent = String(photos.length);
+  detectedCountEl.textContent = String(detected.length);
   detectedEl.hidden = false;
-  detectedEl.classList.toggle("empty", photos.length === 0);
+  detectedEl.classList.toggle("empty", detected.length === 0);
   detectedListEl.innerHTML = "";
-  for (const p of photos) {
+  for (const p of detected) {
     const li = document.createElement("li");
     li.draggable = true;
     li.dataset.section = p.section || "";
     li.title = `${p.section || ""}\n${p.url}`;
     const img = document.createElement("img");
-    img.src = p.url;
+    img.src = p.dataUrl || p.url;
     img.alt = p.alt || "";
     li.appendChild(img);
     li.addEventListener("dragstart", (e) => {
@@ -499,7 +499,7 @@ function showDetected(photos) {
     li.addEventListener("click", (e) => {
       if (e.detail > 1) return; // ignore the click that's part of a dblclick
       const idx = detected.findIndex((x) => x === p);
-      openLightbox(detected, idx >= 0 ? idx : 0);
+      openLightbox(detected, idx >= 0 ? idx : 0, { taggable: true });
     });
     detectedListEl.appendChild(li);
   }
@@ -635,15 +635,21 @@ $("#multiTagClose").addEventListener("click", () => closeMultiTagModal(true));
 const lightboxEl = $("#lightbox");
 const lightboxImg = $("#lightboxImg");
 const lightboxCaption = $("#lightboxCaption");
+const lightboxTagsEl = $("#lightboxTags");
 let lightboxItems = [];
 let lightboxIndex = 0;
+let lightboxTaggable = false;
 
-function openLightbox(items, index) {
+// Map<detectedId, Map<categoryId, photoIdInCategory>>
+const detectedTagAssignments = new Map();
+
+function openLightbox(items, index, opts = {}) {
   if (!items?.length) return;
   lightboxItems = items;
   lightboxIndex = Math.max(0, Math.min(index || 0, items.length - 1));
-  showLightbox();
+  lightboxTaggable = !!opts.taggable;
   lightboxEl.hidden = false;
+  showLightbox();
 }
 
 function showLightbox() {
@@ -662,12 +668,72 @@ function showLightbox() {
     lightboxItems.length > 1 ? "visible" : "hidden";
   $("#lightboxNext").style.visibility =
     lightboxItems.length > 1 ? "visible" : "hidden";
+  if (lightboxTaggable && item.detectedId) {
+    renderLightboxPills(item);
+    lightboxTagsEl.hidden = false;
+  } else {
+    lightboxTagsEl.hidden = true;
+    lightboxTagsEl.innerHTML = "";
+  }
+}
+
+function renderLightboxPills(item) {
+  lightboxTagsEl.innerHTML = "";
+  const assigned =
+    detectedTagAssignments.get(item.detectedId) || new Map();
+  for (const cat of state.categories) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tag-pill";
+    btn.textContent = cat.title;
+    if (assigned.has(cat.id)) btn.classList.add("active");
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      togglePillForItem(item, cat, btn);
+    });
+    lightboxTagsEl.appendChild(btn);
+  }
+}
+
+async function togglePillForItem(item, cat, btn) {
+  let assigned = detectedTagAssignments.get(item.detectedId);
+  if (!assigned) {
+    assigned = new Map();
+    detectedTagAssignments.set(item.detectedId, assigned);
+  }
+  if (assigned.has(cat.id)) {
+    const photoId = assigned.get(cat.id);
+    cat.photos = cat.photos.filter((p) => p.id !== photoId);
+    assigned.delete(cat.id);
+    btn.classList.remove("active");
+  } else {
+    let dataUrl = item.dataUrl;
+    if (!dataUrl || dataUrl === item.url) {
+      const fetched = await fetchAsDataUrl(item.url);
+      dataUrl = fetched?.dataUrl || item.dataUrl || item.url;
+    }
+    const photo = {
+      id: uid(),
+      url: item.url,
+      dataUrl,
+      pageUrl: item.pageUrl || "",
+      pageTitle: item.pageTitle || item.section || "",
+      alt: item.alt || "",
+      addedAt: Date.now(),
+    };
+    cat.photos.push(photo);
+    assigned.set(cat.id, photo.id);
+    btn.classList.add("active");
+  }
+  await save();
+  render();
 }
 
 function closeLightbox() {
   lightboxEl.hidden = true;
   lightboxImg.removeAttribute("src");
   lightboxItems = [];
+  lightboxTaggable = false;
 }
 
 function stepLightbox(delta) {
@@ -773,6 +839,62 @@ importInput.addEventListener("change", async (e) => {
   importInput.value = "";
 });
 
+$("#importUrlBtn").addEventListener("click", async () => {
+  const url = prompt("Paste an image or PDF URL:");
+  if (!url) return;
+  try {
+    const photos = await importFromUrl(url.trim());
+    if (photos.length) {
+      showDetected([...(detected || []), ...photos]);
+    } else {
+      alert("No images found at that URL.");
+    }
+  } catch (err) {
+    console.error(err);
+    alert(`URL import failed: ${err?.message || err}`);
+  }
+});
+
+async function importFromUrl(url) {
+  if (!/^https?:|^data:/.test(url)) {
+    throw new Error("Only http(s) and data URLs are supported.");
+  }
+  const res = await new Promise((resolve) =>
+    chrome.runtime.sendMessage({ type: "fetchUrlBytes", url }, resolve)
+  );
+  if (!res?.ok) throw new Error(res?.error || "fetch failed");
+  const ct = (res.contentType || "").toLowerCase();
+  const cleanName =
+    decodeURIComponent((url.split("?")[0].split("/").pop() || "remote")).slice(
+      0,
+      120
+    );
+
+  if (ct.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp)$/i.test(cleanName)) {
+    return [
+      {
+        url,
+        dataUrl: res.dataUrl,
+        pageTitle: cleanName,
+        alt: "",
+        section: "URL import",
+      },
+    ];
+  }
+
+  if (ct === "application/pdf" || /\.pdf$/i.test(cleanName)) {
+    const bin = atob(res.dataUrl.split(",")[1] || "");
+    const data = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) data[i] = bin.charCodeAt(i);
+    const file = new File([data], cleanName.endsWith(".pdf") ? cleanName : cleanName + ".pdf", {
+      type: "application/pdf",
+    });
+    return extractFromPdf(file);
+  }
+
+  throw new Error(`Unsupported content type: ${ct || "unknown"}`);
+}
+
 async function extractFromFile(file) {
   const name = file.name.toLowerCase();
   if (file.type.startsWith("image/")) {
@@ -825,120 +947,38 @@ async function extractFromPdf(file) {
   );
 
   const data = new Uint8Array(await file.arrayBuffer());
-  const pdf = await pdfjsLib.getDocument({ data, disableFontFace: true }).promise;
+  const pdf = await pdfjsLib.getDocument({ data, disableFontFace: true })
+    .promise;
   const photos = [];
-  const seen = new Set();
+  const scale = 2;
 
   for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
     const page = await pdf.getPage(pageNum);
-    const ops = await page.getOperatorList();
-    const targets = new Set([
-      pdfjsLib.OPS.paintImageXObject,
-      pdfjsLib.OPS.paintInlineImageXObject,
-      pdfjsLib.OPS.paintJpegXObject,
-    ]);
-    for (let i = 0; i < ops.fnArray.length; i++) {
-      if (!targets.has(ops.fnArray[i])) continue;
-      const args = ops.argsArray[i];
-      const objId = typeof args[0] === "string" ? args[0] : null;
-      if (!objId || seen.has(objId)) continue;
-      seen.add(objId);
-      let imgObj;
-      try {
-        imgObj = await new Promise((resolve) =>
-          page.objs.get(objId, resolve)
-        );
-      } catch (err) {
-        console.warn("PDF image fetch failed", objId, err);
-        continue;
-      }
-      if (!imgObj || !imgObj.width || !imgObj.height) continue;
-      if (imgObj.width < 60 && imgObj.height < 60) continue;
-      try {
-        const dataUrl = await renderPdfImage(imgObj);
-        photos.push({
-          url: `${file.name}#page${pageNum}/${objId}`,
-          dataUrl,
-          pageTitle: `${file.name} – page ${pageNum}`,
-          alt: "",
-          section: "PDF import",
-        });
-      } catch (err) {
-        console.warn("PDF image render failed", objId, err);
-      }
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    try {
+      await page.render({ canvasContext: ctx, viewport }).promise;
+    } catch (err) {
+      console.warn("PDF page render failed", pageNum, err);
+      page.cleanup();
+      continue;
     }
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    photos.push({
+      url: `${file.name}#page${pageNum}`,
+      dataUrl,
+      pageTitle: `${file.name} – page ${pageNum}`,
+      alt: "",
+      section: "PDF page",
+    });
     page.cleanup();
   }
   return photos;
-}
-
-async function renderPdfImage(img) {
-  const w = img.width;
-  const h = img.height;
-  const canvas =
-    typeof OffscreenCanvas !== "undefined"
-      ? new OffscreenCanvas(w, h)
-      : Object.assign(document.createElement("canvas"), { width: w, height: h });
-  const ctx = canvas.getContext("2d");
-
-  if (img.bitmap && typeof img.bitmap.width === "number") {
-    ctx.drawImage(img.bitmap, 0, 0);
-  } else if (img.data) {
-    const id = ctx.createImageData(w, h);
-    fillRgba(id.data, img);
-    ctx.putImageData(id, 0, 0);
-  } else {
-    throw new Error("unrecognised image payload");
-  }
-
-  if (canvas.convertToBlob) {
-    const blob = await canvas.convertToBlob({ type: "image/png" });
-    return blobToDataUrl(blob);
-  }
-  return canvas.toDataURL("image/png");
-}
-
-function fillRgba(out, img) {
-  const src = img.data;
-  const w = img.width;
-  const h = img.height;
-  const n = w * h;
-  const kind = img.kind;
-  // pdf.js ImageKind: 1 GRAYSCALE_1BPP, 2 RGB_24BPP, 3 RGBA_32BPP
-  if (kind === 3) {
-    out.set(src.subarray(0, out.length));
-    return;
-  }
-  if (kind === 2) {
-    for (let i = 0, j = 0; i < n; i++, j += 3) {
-      const k = i * 4;
-      out[k] = src[j];
-      out[k + 1] = src[j + 1];
-      out[k + 2] = src[j + 2];
-      out[k + 3] = 255;
-    }
-    return;
-  }
-  if (kind === 1) {
-    let bit = 0;
-    let byte = 0;
-    for (let i = 0; i < n; i++) {
-      const v = (src[byte] >> (7 - bit)) & 1 ? 255 : 0;
-      const k = i * 4;
-      out[k] = v;
-      out[k + 1] = v;
-      out[k + 2] = v;
-      out[k + 3] = 255;
-      bit++;
-      if (bit === 8) {
-        bit = 0;
-        byte++;
-      }
-    }
-    return;
-  }
-  // Fallback: assume already RGBA-ish
-  out.set(src.subarray(0, out.length));
 }
 
 function blobToDataUrl(blob) {
@@ -1003,20 +1043,40 @@ function readZipEntries(buf) {
 async function inflateEntry(buf, entry) {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const lh = entry.localHeader;
-  if (view.getUint32(lh, true) !== 0x04034b50) return null;
+  if (view.getUint32(lh, true) !== 0x04034b50) {
+    console.warn("ZIP local header missing for", entry.name);
+    return null;
+  }
   const nameLen = view.getUint16(lh + 26, true);
   const extraLen = view.getUint16(lh + 28, true);
   const dataStart = lh + 30 + nameLen + extraLen;
-  const compressed = buf.subarray(dataStart, dataStart + entry.compSize);
-  if (entry.method === 0) return compressed;
-  if (entry.method === 8) {
-    const stream = new Blob([compressed])
-      .stream()
-      .pipeThrough(new DecompressionStream("deflate-raw"));
-    const out = await new Response(stream).arrayBuffer();
-    return new Uint8Array(out);
+  // Prefer the local header's size (more accurate when the central directory
+  // shares a record with descriptors in the data area).
+  const localComp = view.getUint32(lh + 18, true);
+  const compSize = localComp || entry.compSize;
+  if (!compSize || dataStart + compSize > buf.length) {
+    console.warn("ZIP entry size out of bounds for", entry.name, {
+      compSize,
+      dataStart,
+      bufLen: buf.length,
+    });
+    return null;
   }
-  console.warn("Unsupported ZIP method", entry.method, entry.name);
+  const compressed = new Uint8Array(buf.buffer, buf.byteOffset + dataStart, compSize);
+  if (entry.method === 0) return new Uint8Array(compressed);
+  if (entry.method === 8) {
+    try {
+      const stream = new Blob([compressed])
+        .stream()
+        .pipeThrough(new DecompressionStream("deflate-raw"));
+      const out = await new Response(stream).arrayBuffer();
+      return new Uint8Array(out);
+    } catch (err) {
+      console.warn("ZIP deflate failed for", entry.name, err);
+      return null;
+    }
+  }
+  console.warn("Unsupported ZIP method", entry.method, "for", entry.name);
   return null;
 }
 
