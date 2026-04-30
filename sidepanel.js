@@ -49,6 +49,41 @@ function getBucket() {
   return ensureBucket(state.currentKey || DEFAULT_KEY);
 }
 
+function ensureDefaultTags(bucket) {
+  let mutated = false;
+  const titleLc = (s) => (s || "").toLowerCase();
+  for (let i = 0; i < DEFAULT_CATEGORIES.length; i++) {
+    const def = DEFAULT_CATEGORIES[i];
+    const exists = bucket.categories.some(
+      (c) => titleLc(c.title) === titleLc(def.title)
+    );
+    if (exists) continue;
+    const newCat = {
+      id: uid(),
+      title: def.title,
+      guidance: def.guidance,
+      collapsed: true,
+      status: null,
+      photos: [],
+    };
+    let insertedAt = -1;
+    for (let j = i - 1; j >= 0; j--) {
+      const prevTitle = titleLc(DEFAULT_CATEGORIES[j].title);
+      const idx = bucket.categories.findIndex(
+        (c) => titleLc(c.title) === prevTitle
+      );
+      if (idx >= 0) {
+        bucket.categories.splice(idx + 1, 0, newCat);
+        insertedAt = idx + 1;
+        break;
+      }
+    }
+    if (insertedAt < 0) bucket.categories.unshift(newCat);
+    mutated = true;
+  }
+  return mutated;
+}
+
 function bucketLabel(bucket, key) {
   if (!bucket) return key;
   const m = bucket.meta || {};
@@ -99,6 +134,11 @@ const DEFAULT_CATEGORIES = [
     guidance: "Windows, doors, draught proofing, chimneys, etc.",
   },
   {
+    title: "Corridor / Stairwell",
+    guidance:
+      "Internal corridor and stairwell views including any low-energy lighting and door arrangements between heated and unheated zones.",
+  },
+  {
     title: "Primary Heating System",
     guidance:
       "Primary heating system(s) (e.g. boiler showing any associated key features such as a condensate pipe or label indicating the boiler model if using PCDF).",
@@ -123,9 +163,19 @@ const DEFAULT_CATEGORIES = [
       "We must have a picture where possible. If a cylinder stat is assumed this should be documented in your site notes.",
   },
   {
+    title: "Shower / Bath",
+    guidance:
+      "Photos of any electric showers, instantaneous mains-pressure showers, mixer showers and baths to support hot water demand and waste-water heat recovery selections.",
+  },
+  {
     title: "Electricity Meter",
     guidance:
       "Indicating dual or single tariff. If no access then site notes are vital to indicate the selection of electricity tariff. Only use 'unknown' if there is no access to the meter, no documentary evidence such as a utility bill AND there are no fixed dual electricity appliances in the dwelling. If there is a dual or twin HWC and/or fixed storage heaters it is advised to enter 'unknown' if you cannot access or locate the meter, and allow the software to default.",
+  },
+  {
+    title: "Gas Meter",
+    guidance:
+      "Mains gas meter (and any sub-meters) to confirm fuel type and supply, including a clear reading where possible.",
   },
   {
     title: "Heating Fuel",
@@ -141,6 +191,11 @@ const DEFAULT_CATEGORIES = [
     title: "Light Fittings",
     guidance:
       "Evidence of low energy lamps within the building if they are included in the assessment (an example or selection is acceptable, you do not need to photograph every light fitting).",
+  },
+  {
+    title: "Ventilation",
+    guidance:
+      "Ventilation strategy — extract fans, MVHR/MEV units, trickle vents, passive stacks — including any labels or controllers that confirm the system type.",
   },
   {
     title: "Renewables",
@@ -209,50 +264,13 @@ async function load() {
     await save();
   }
 
-  // Ensure each bucket has the Floorplan tag (idempotent).
+  // Ensure every default tag exists in each bucket, in roughly the
+  // canonical order. Idempotent — runs every load.
   let mutated = false;
   for (const key of Object.keys(state.assessments)) {
     const b = state.assessments[key];
     if (!b.categories) b.categories = defaultCategories();
-    if (!b.categories.some((c) => c.title.toLowerCase() === "floorplan")) {
-      const def = DEFAULT_CATEGORIES.find((d) => d.title === "Floorplan");
-      b.categories.unshift({
-        id: uid(),
-        title: "Floorplan",
-        guidance: def?.guidance || "",
-        collapsed: true,
-        status: null,
-        photos: [],
-      });
-      mutated = true;
-    }
-    if (
-      !b.categories.some(
-        (c) => c.title.toLowerCase() === "secondary heating system"
-      )
-    ) {
-      const def = DEFAULT_CATEGORIES.find(
-        (d) => d.title === "Secondary Heating System"
-      );
-      const primaryIdx = b.categories.findIndex(
-        (c) => c.title.toLowerCase() === "primary heating system"
-      );
-      const newCat = {
-        id: uid(),
-        title: "Secondary Heating System",
-        guidance: def?.guidance || "",
-        collapsed: true,
-        status: null,
-        photos: [],
-      };
-      if (primaryIdx >= 0) {
-        b.categories.splice(primaryIdx + 1, 0, newCat);
-      } else {
-        b.categories.push(newCat);
-      }
-      mutated = true;
-    }
-    // Backfill status field on existing categories.
+    if (ensureDefaultTags(b)) mutated = true;
     for (const c of b.categories) {
       if (typeof c.status === "undefined") c.status = null;
     }

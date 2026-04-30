@@ -43,6 +43,11 @@ const TAGS = [
     guidance: "Windows, doors, draught proofing, chimneys, etc.",
   },
   {
+    title: "Corridor / Stairwell",
+    guidance:
+      "Internal corridor and stairwell views including any low-energy lighting and door arrangements between heated and unheated zones.",
+  },
+  {
     title: "Primary Heating System",
     guidance:
       "Primary heating system(s) (e.g. boiler showing any associated key features such as a condensate pipe or label indicating the boiler model if using PCDF).",
@@ -67,9 +72,19 @@ const TAGS = [
       "We must have a picture where possible. If a cylinder stat is assumed this should be documented in your site notes.",
   },
   {
+    title: "Shower / Bath",
+    guidance:
+      "Photos of any electric showers, instantaneous mains-pressure showers, mixer showers and baths to support hot water demand and waste-water heat recovery selections.",
+  },
+  {
     title: "Electricity Meter",
     guidance:
       "Indicating dual or single tariff. If no access then site notes are vital to indicate the selection of electricity tariff. Only use 'unknown' if there is no access to the meter, no documentary evidence such as a utility bill AND there are no fixed dual electricity appliances in the dwelling. If there is a dual or twin HWC and/or fixed storage heaters it is advised to enter 'unknown' if you cannot access or locate the meter, and allow the software to default.",
+  },
+  {
+    title: "Gas Meter",
+    guidance:
+      "Mains gas meter (and any sub-meters) to confirm fuel type and supply, including a clear reading where possible.",
   },
   {
     title: "Heating Fuel",
@@ -85,6 +100,11 @@ const TAGS = [
     title: "Light Fittings",
     guidance:
       "Evidence of low energy lamps within the building if they are included in the assessment (an example or selection is acceptable, you do not need to photograph every light fitting).",
+  },
+  {
+    title: "Ventilation",
+    guidance:
+      "Ventilation strategy — extract fans, MVHR/MEV units, trickle vents, passive stacks — including any labels or controllers that confirm the system type.",
   },
   {
     title: "Renewables",
