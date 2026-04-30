@@ -24,6 +24,22 @@ Requires Chrome 114+ for the `chrome.sidePanel` API.
   `EPC/<category>/<id>.<ext>` in your Downloads folder.
 - All state is kept in `chrome.storage.local` so it survives across sessions.
 
+### Auto-scan an assessment record
+
+On a page like `https://energytrust.assessapp.com/assessment_records/*` click
+**Scan tab** in the side panel. The extension locates the
+"1. Photographic Evidence" question and lists the photos under both
+"Please upload your photographic evidence below." and the optional
+"Additional Evidence" section. Photos in the additional section are tagged
+with a small `+` badge.
+
+From the **Detected on page** strip you can:
+
+- drag a thumbnail into any category, or
+- pick a category from the dropdown and click **Send all** to file every
+  detected photo at once, or
+- double‑click a thumbnail to send just that one to the selected category.
+
 ## Default categories
 
 - Property exterior – front

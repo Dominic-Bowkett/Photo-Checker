@@ -10,6 +10,7 @@
     <header class="topbar">
       <h1>EPC Photo Organiser</h1>
       <div class="actions">
+        <button id="scanTab" title="Find photos on the active assessment page">Scan tab</button>
         <button id="addCategory" title="Add a custom category">+ Category</button>
         <button id="exportAll" title="Download all photos">Export</button>
         <button id="clearAll" class="danger" title="Remove all photos">Clear</button>
@@ -17,8 +18,23 @@
     </header>
 
     <p class="hint">
-      Drag any image from the active tab into a category below. Photos are saved locally.
+      Drag any image from the active tab into a category below. Use
+      <strong>Scan tab</strong> on an
+      <code>energytrust.assessapp.com</code> assessment page to pull photos from
+      Question 1 automatically.
     </p>
+
+    <section id="detected" hidden>
+      <header class="detected-header">
+        <h2>Detected on page <span id="detectedCount">0</span></h2>
+        <div class="detected-actions">
+          <select id="detectedAssign"></select>
+          <button id="detectedAssignAll" title="Assign every detected photo">Send all</button>
+          <button id="detectedClose" title="Hide">×</button>
+        </div>
+      </header>
+      <ul id="detectedList"></ul>
+    </section>
 
     <main id="categories"></main>
 

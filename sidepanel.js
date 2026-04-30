@@ -281,4 +281,110 @@ $("#exportAll").addEventListener("click", () => {
   }
 });
 
+const detectedEl = $("#detected");
+const detectedListEl = $("#detectedList");
+const detectedCountEl = $("#detectedCount");
+const detectedAssignEl = $("#detectedAssign");
+let detected = [];
+
+function rebuildAssignDropdown() {
+  detectedAssignEl.innerHTML = "";
+  for (const cat of state.categories) {
+    const opt = document.createElement("option");
+    opt.value = cat.id;
+    opt.textContent = cat.title;
+    detectedAssignEl.appendChild(opt);
+  }
+}
+
+function showDetected(photos) {
+  detected = photos;
+  rebuildAssignDropdown();
+  detectedCountEl.textContent = String(photos.length);
+  detectedEl.hidden = false;
+  detectedEl.classList.toggle("empty", photos.length === 0);
+  detectedListEl.innerHTML = "";
+  for (const p of photos) {
+    const li = document.createElement("li");
+    li.draggable = true;
+    li.dataset.section = p.section || "";
+    li.title = `${p.section || ""}\n${p.url}`;
+    const img = document.createElement("img");
+    img.src = p.url;
+    img.alt = p.alt || "";
+    li.appendChild(img);
+    li.addEventListener("dragstart", (e) => {
+      e.dataTransfer.effectAllowed = "copy";
+      e.dataTransfer.setData("text/uri-list", p.url);
+      e.dataTransfer.setData("text/plain", p.url);
+      e.dataTransfer.setData(
+        "application/x-epc-photo",
+        JSON.stringify(p)
+      );
+    });
+    li.addEventListener("dblclick", () => assignDetected([p]));
+    detectedListEl.appendChild(li);
+  }
+}
+
+async function assignDetected(items) {
+  const catId = detectedAssignEl.value;
+  const cat = state.categories.find((c) => c.id === catId);
+  if (!cat) return;
+  for (const p of items) {
+    const fetched = await fetchAsDataUrl(p.url);
+    cat.photos.push({
+      id: uid(),
+      url: p.url,
+      dataUrl: fetched?.dataUrl || p.url,
+      pageUrl: p.pageUrl || "",
+      pageTitle: p.pageTitle || p.section || "",
+      alt: p.alt || "",
+      addedAt: Date.now(),
+    });
+  }
+  await save();
+  render();
+}
+
+$("#scanTab").addEventListener("click", async () => {
+  let tab;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch (_) {
+    /* no permission yet */
+  }
+  if (!tab?.id) {
+    alert("No active tab found.");
+    return;
+  }
+  let res;
+  try {
+    res = await chrome.tabs.sendMessage(tab.id, { type: "findEpcPhotos" });
+  } catch (e) {
+    alert(
+      "Could not scan this tab. Make sure the page has finished loading and reload the extension if you just installed it."
+    );
+    return;
+  }
+  if (!res?.anchor) {
+    alert(
+      'Could not find a "Photographic Evidence" question on this page. Open an assessment record at energytrust.assessapp.com and try again.'
+    );
+    showDetected([]);
+    return;
+  }
+  showDetected(res.photos || []);
+});
+
+$("#detectedAssignAll").addEventListener("click", () => {
+  if (!detected.length) return;
+  assignDetected(detected);
+});
+
+$("#detectedClose").addEventListener("click", () => {
+  detectedEl.hidden = true;
+  detected = [];
+});
+
 load();
