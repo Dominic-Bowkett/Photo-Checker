@@ -1,6 +1,62 @@
 const STORAGE_KEY = "epcPhotoState";
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 4;
 const PENDING_KEY = "epcPendingMultiTag";
+const DEFAULT_KEY = "default";
+
+function assessmentKeyFromMeta(meta) {
+  if (!meta) return DEFAULT_KEY;
+  const norm = (s) => (s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const sn = norm(meta.studentName);
+  const t = norm(meta.title);
+  if (!sn && !t) return DEFAULT_KEY;
+  return `${sn}|${t}`.slice(0, 200);
+}
+
+function defaultCategories() {
+  return DEFAULT_CATEGORIES.map((c) => ({
+    id: uid(),
+    title: c.title,
+    guidance: c.guidance,
+    collapsed: true,
+    status: null,
+    photos: [],
+  }));
+}
+
+function ensureBucket(key, meta) {
+  if (!state.assessments[key]) {
+    state.assessments[key] = {
+      meta: meta || {
+        studentName: "",
+        title: key === DEFAULT_KEY ? "Default" : "",
+        pageUrl: "",
+        pageTitle: "",
+      },
+      categories: defaultCategories(),
+      lastSeen: Date.now(),
+    };
+  } else if (meta) {
+    state.assessments[key].meta = {
+      ...state.assessments[key].meta,
+      ...meta,
+    };
+  }
+  if (state.assessments[key]) state.assessments[key].lastSeen = Date.now();
+  return state.assessments[key];
+}
+
+function getBucket() {
+  return ensureBucket(state.currentKey || DEFAULT_KEY);
+}
+
+function bucketLabel(bucket, key) {
+  if (!bucket) return key;
+  const m = bucket.meta || {};
+  if (m.studentName && m.title) return `${m.studentName} — ${m.title}`;
+  if (m.studentName) return m.studentName;
+  if (m.title) return m.title;
+  return key === DEFAULT_KEY ? "Default" : key;
+}
 
 const DEFAULT_CATEGORIES = [
   {
@@ -98,7 +154,8 @@ const uid = () =>
 
 const state = {
   version: STORAGE_VERSION,
-  categories: [],
+  currentKey: DEFAULT_KEY,
+  assessments: {},
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -111,49 +168,96 @@ let suppressNextStorageEvent = false;
 async function load() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
   const existing = stored[STORAGE_KEY];
-  if (
-    existing?.version === STORAGE_VERSION &&
-    Array.isArray(existing.categories) &&
-    existing.categories.length
-  ) {
-    state.categories = existing.categories.map((c) => ({
-      ...c,
-      guidance:
-        c.guidance ??
-        DEFAULT_CATEGORIES.find((d) => d.title === c.title)?.guidance ??
-        "",
-    }));
+  if (existing?.version === STORAGE_VERSION && existing.assessments) {
     state.version = existing.version;
-    let mutated = false;
-    if (
-      !state.categories.some(
-        (c) => c.title.toLowerCase() === "floorplan"
-      )
-    ) {
+    state.assessments = existing.assessments || {};
+    state.currentKey = existing.currentKey || DEFAULT_KEY;
+  } else if (Array.isArray(existing?.categories) && existing.categories.length) {
+    // Migrate v2/v3 flat categories into a single Default bucket.
+    state.assessments = {
+      [DEFAULT_KEY]: {
+        meta: {
+          studentName: "",
+          title: "Default",
+          pageUrl: "",
+          pageTitle: "",
+        },
+        categories: existing.categories.map((c) => ({
+          id: c.id || uid(),
+          title: c.title,
+          guidance:
+            c.guidance ??
+            DEFAULT_CATEGORIES.find((d) => d.title === c.title)?.guidance ??
+            "",
+          collapsed: c.collapsed ?? true,
+          status: c.status || null,
+          photos: c.photos || [],
+        })),
+        lastSeen: Date.now(),
+      },
+    };
+    state.currentKey = DEFAULT_KEY;
+    await save();
+  } else {
+    ensureBucket(DEFAULT_KEY);
+    state.currentKey = DEFAULT_KEY;
+    await save();
+  }
+
+  // Ensure each bucket has the Floorplan tag (idempotent).
+  let mutated = false;
+  for (const key of Object.keys(state.assessments)) {
+    const b = state.assessments[key];
+    if (!b.categories) b.categories = defaultCategories();
+    if (!b.categories.some((c) => c.title.toLowerCase() === "floorplan")) {
       const def = DEFAULT_CATEGORIES.find((d) => d.title === "Floorplan");
-      state.categories.unshift({
+      b.categories.unshift({
         id: uid(),
         title: "Floorplan",
         guidance: def?.guidance || "",
         collapsed: true,
+        status: null,
         photos: [],
       });
       mutated = true;
     }
-    if (mutated) await save();
-  } else {
-    state.categories = DEFAULT_CATEGORIES.map((c) => ({
-      id: uid(),
-      title: c.title,
-      guidance: c.guidance,
-      collapsed: true,
-      photos: [],
-    }));
-    state.version = STORAGE_VERSION;
-    await save();
+    // Backfill status field on existing categories.
+    for (const c of b.categories) {
+      if (typeof c.status === "undefined") c.status = null;
+    }
   }
+  if (mutated) await save();
+
   render();
   await checkPendingMultiTag();
+  detectActiveTabAssessment();
+}
+
+async function detectActiveTabAssessment() {
+  let tab;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch (_) {
+    return;
+  }
+  if (!tab?.id) return;
+  let meta;
+  try {
+    meta = await chrome.tabs.sendMessage(tab.id, {
+      type: "getAssessmentContext",
+    });
+  } catch (_) {
+    return;
+  }
+  if (!meta) return;
+  const key = assessmentKeyFromMeta(meta);
+  if (key === DEFAULT_KEY) return;
+  ensureBucket(key, meta);
+  if (state.currentKey !== key) {
+    state.currentKey = key;
+  }
+  await save();
+  render();
 }
 
 async function save() {
@@ -168,8 +272,9 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
       suppressNextStorageEvent = false;
     } else {
       const next = changes[STORAGE_KEY].newValue;
-      if (next?.version === STORAGE_VERSION) {
-        state.categories = next.categories || [];
+      if (next?.version === STORAGE_VERSION && next.assessments) {
+        state.assessments = next.assessments;
+        if (next.currentKey) state.currentKey = next.currentKey;
         render();
       }
     }
@@ -179,9 +284,19 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   }
 });
 
+if (chrome.tabs?.onActivated) {
+  chrome.tabs.onActivated.addListener(() => detectActiveTabAssessment());
+}
+if (chrome.tabs?.onUpdated) {
+  chrome.tabs.onUpdated.addListener((_id, info) => {
+    if (info.status === "complete") detectActiveTabAssessment();
+  });
+}
+
 function render() {
+  rebuildAssessmentBar();
   categoriesEl.innerHTML = "";
-  for (const cat of state.categories) {
+  for (const cat of getBucket().categories) {
     categoriesEl.appendChild(renderCategory(cat));
   }
   rebuildTagFilter();
@@ -189,8 +304,26 @@ function render() {
   renderFloorplanPinned();
 }
 
+function rebuildAssessmentBar() {
+  const sel = document.getElementById("assessmentSelect");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const keys = Object.keys(state.assessments).sort((a, b) => {
+    const aL = state.assessments[a].lastSeen || 0;
+    const bL = state.assessments[b].lastSeen || 0;
+    return bL - aL;
+  });
+  for (const key of keys) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = bucketLabel(state.assessments[key], key);
+    sel.appendChild(opt);
+  }
+  sel.value = state.currentKey;
+}
+
 function findFloorplanCategory() {
-  return state.categories.find(
+  return getBucket().categories.find(
     (c) => c.title.toLowerCase() === "floorplan"
   );
 }
@@ -261,9 +394,40 @@ function renderCategory(cat) {
 
   $(".remove", node).addEventListener("click", async () => {
     if (!confirm(`Remove tag "${cat.title}" and all its photos?`)) return;
-    state.categories = state.categories.filter((c) => c.id !== cat.id);
+    getBucket().categories = getBucket().categories.filter((c) => c.id !== cat.id);
     await save();
     render();
+  });
+
+  // Status (Done / N/A) toggles, visible even when collapsed.
+  node.dataset.status = cat.status || "";
+  const doneBtn = node.querySelector(".status-btn.done");
+  const naBtn = node.querySelector(".status-btn.na");
+  const reflectStatus = () => {
+    node.dataset.status = cat.status || "";
+    doneBtn.classList.toggle("active", cat.status === "done");
+    naBtn.classList.toggle("active", cat.status === "na");
+    doneBtn.setAttribute(
+      "aria-pressed",
+      cat.status === "done" ? "true" : "false"
+    );
+    naBtn.setAttribute(
+      "aria-pressed",
+      cat.status === "na" ? "true" : "false"
+    );
+  };
+  reflectStatus();
+  doneBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    cat.status = cat.status === "done" ? null : "done";
+    reflectStatus();
+    await save();
+  });
+  naBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    cat.status = cat.status === "na" ? null : "na";
+    reflectStatus();
+    await save();
   });
 
   for (const photo of cat.photos) {
@@ -433,7 +597,7 @@ function guessExt(url) {
 $("#addCategory").addEventListener("click", async () => {
   const title = prompt("New tag name:");
   if (!title) return;
-  state.categories.push({
+  getBucket().categories.push({
     id: uid(),
     title: title.trim(),
     guidance: "",
@@ -446,13 +610,13 @@ $("#addCategory").addEventListener("click", async () => {
 
 $("#clearAll").addEventListener("click", async () => {
   if (!confirm("Remove ALL photos from every tag?")) return;
-  for (const c of state.categories) c.photos = [];
+  for (const c of getBucket().categories) c.photos = [];
   await save();
   render();
 });
 
 $("#exportAll").addEventListener("click", () => {
-  for (const cat of state.categories) {
+  for (const cat of getBucket().categories) {
     for (const photo of cat.photos) downloadPhoto(cat, photo);
   }
 });
@@ -460,31 +624,33 @@ $("#exportAll").addEventListener("click", () => {
 const detectedEl = $("#detected");
 const detectedListEl = $("#detectedList");
 const detectedCountEl = $("#detectedCount");
-const detectedAssignEl = $("#detectedAssign");
 let detected = [];
 
-function rebuildAssignDropdown() {
-  detectedAssignEl.innerHTML = "";
-  for (const cat of state.categories) {
-    const opt = document.createElement("option");
-    opt.value = cat.id;
-    opt.textContent = cat.title;
-    detectedAssignEl.appendChild(opt);
+function existingPhotoUrls() {
+  const set = new Set();
+  for (const cat of getBucket().categories) {
+    for (const p of cat.photos) {
+      if (p.url) set.add(p.url);
+    }
   }
+  return set;
 }
 
 function showDetected(photos) {
   detected = photos.map((p) => ({ ...p, detectedId: p.detectedId || uid() }));
-  rebuildAssignDropdown();
   detectedCountEl.textContent = String(detected.length);
   detectedEl.hidden = false;
   detectedEl.classList.toggle("empty", detected.length === 0);
   detectedListEl.innerHTML = "";
+  const existing = existingPhotoUrls();
   for (const p of detected) {
     const li = document.createElement("li");
     li.draggable = true;
     li.dataset.section = p.section || "";
     li.title = `${p.section || ""}\n${p.url}`;
+    const isExisting = p.url && existing.has(p.url);
+    li.classList.toggle("is-tagged", !!isExisting);
+    li.classList.toggle("is-new", !isExisting);
     const img = document.createElement("img");
     img.src = p.dataUrl || p.url;
     img.alt = p.alt || "";
@@ -495,34 +661,12 @@ function showDetected(photos) {
       e.dataTransfer.setData("text/plain", p.url);
       e.dataTransfer.setData("application/x-epc-photo", JSON.stringify(p));
     });
-    li.addEventListener("dblclick", () => assignDetected([p]));
-    li.addEventListener("click", (e) => {
-      if (e.detail > 1) return; // ignore the click that's part of a dblclick
+    li.addEventListener("click", () => {
       const idx = detected.findIndex((x) => x === p);
       openLightbox(detected, idx >= 0 ? idx : 0, { taggable: true });
     });
     detectedListEl.appendChild(li);
   }
-}
-
-async function assignDetected(items) {
-  const catId = detectedAssignEl.value;
-  const cat = state.categories.find((c) => c.id === catId);
-  if (!cat) return;
-  for (const p of items) {
-    const fetched = await fetchAsDataUrl(p.url);
-    cat.photos.push({
-      id: uid(),
-      url: p.url,
-      dataUrl: fetched?.dataUrl || p.url,
-      pageUrl: p.pageUrl || "",
-      pageTitle: p.pageTitle || p.section || "",
-      alt: p.alt || "",
-      addedAt: Date.now(),
-    });
-  }
-  await save();
-  render();
 }
 
 $("#scanTab").addEventListener("click", async () => {
@@ -555,11 +699,6 @@ $("#scanTab").addEventListener("click", async () => {
   showDetected(res.photos || []);
 });
 
-$("#detectedAssignAll").addEventListener("click", () => {
-  if (!detected.length) return;
-  assignDetected(detected);
-});
-
 $("#detectedClose").addEventListener("click", () => {
   detectedEl.hidden = true;
   detected = [];
@@ -575,13 +714,21 @@ async function checkPendingMultiTag() {
   const pending = stored[PENDING_KEY];
   if (!pending?.photo) return;
   pendingPhoto = pending.photo;
+  // The background bundles the assessment context; switch to that bucket
+  // so the pills reflect the right tag set.
+  if (pending.assessmentKey) {
+    ensureBucket(pending.assessmentKey, pending.meta);
+    state.currentKey = pending.assessmentKey;
+    await save();
+    render();
+  }
   openMultiTagModal(pending.photo);
 }
 
 function openMultiTagModal(photo) {
   multiTagPreview.src = photo.dataUrl || photo.url;
   multiTagOptions.innerHTML = "";
-  for (const cat of state.categories) {
+  for (const cat of getBucket().categories) {
     const id = `mt-${cat.id}`;
     const label = document.createElement("label");
     label.htmlFor = id;
@@ -612,7 +759,7 @@ $("#multiTagSave").addEventListener("click", async () => {
     return;
   }
   for (const catId of checked) {
-    const cat = state.categories.find((c) => c.id === catId);
+    const cat = getBucket().categories.find((c) => c.id === catId);
     if (!cat) continue;
     cat.photos.push({
       id: uid(),
@@ -681,7 +828,7 @@ function renderLightboxPills(item) {
   lightboxTagsEl.innerHTML = "";
   const assigned =
     detectedTagAssignments.get(item.detectedId) || new Map();
-  for (const cat of state.categories) {
+  for (const cat of getBucket().categories) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "tag-pill";
@@ -764,7 +911,7 @@ function rebuildTagFilter() {
   for (const opt of [...tagFilterEl.querySelectorAll("option[data-cat]")]) {
     opt.remove();
   }
-  for (const cat of state.categories) {
+  for (const cat of getBucket().categories) {
     const opt = document.createElement("option");
     opt.value = cat.id;
     opt.dataset.cat = "1";
@@ -784,7 +931,7 @@ function applyFilters() {
 
   for (const node of categoriesEl.querySelectorAll(".category")) {
     const id = node.dataset.id;
-    const cat = state.categories.find((c) => c.id === id);
+    const cat = getBucket().categories.find((c) => c.id === id);
     if (!cat) continue;
 
     let visible = true;
@@ -1079,5 +1226,60 @@ async function inflateEntry(buf, entry) {
   console.warn("Unsupported ZIP method", entry.method, "for", entry.name);
   return null;
 }
+
+document
+  .getElementById("assessmentSelect")
+  .addEventListener("change", async (e) => {
+    state.currentKey = e.target.value;
+    ensureBucket(state.currentKey);
+    await save();
+    render();
+  });
+
+document
+  .getElementById("renameAssessment")
+  .addEventListener("click", async () => {
+    const bucket = getBucket();
+    const current = bucket.meta || {};
+    const studentName = prompt(
+      "Student / contact name:",
+      current.studentName || ""
+    );
+    if (studentName === null) return;
+    const title = prompt("Assessment title:", current.title || "");
+    if (title === null) return;
+    bucket.meta = {
+      ...current,
+      studentName: studentName.trim(),
+      title: title.trim(),
+    };
+    // If the user renamed away from the default we also update the key.
+    const newKey = assessmentKeyFromMeta(bucket.meta);
+    if (newKey !== state.currentKey && newKey !== DEFAULT_KEY) {
+      state.assessments[newKey] = bucket;
+      delete state.assessments[state.currentKey];
+      state.currentKey = newKey;
+    }
+    await save();
+    render();
+  });
+
+document
+  .getElementById("deleteAssessment")
+  .addEventListener("click", async () => {
+    const keys = Object.keys(state.assessments);
+    if (keys.length <= 1) {
+      alert("There's only one assessment — use Clear to empty it instead.");
+      return;
+    }
+    const label = bucketLabel(getBucket(), state.currentKey);
+    if (!confirm(`Delete the assessment "${label}" and all its photos?`)) return;
+    delete state.assessments[state.currentKey];
+    state.currentKey =
+      Object.keys(state.assessments)[0] || DEFAULT_KEY;
+    ensureBucket(state.currentKey);
+    await save();
+    render();
+  });
 
 load();

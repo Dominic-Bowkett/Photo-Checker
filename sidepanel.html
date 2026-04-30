@@ -10,24 +10,28 @@
     <header class="topbar">
       <h1>EPC Photo Organiser</h1>
       <div class="actions">
-        <button id="scanTab" title="Find photos on the active assessment page">Scan tab</button>
-        <button id="addCategory" title="Add a custom category">+ Category</button>
+        <button id="scanTab" title="Find photos on the active assessment page">Scan</button>
         <button id="exportAll" title="Download all photos">Export</button>
-        <button id="clearAll" class="danger" title="Remove all photos">Clear</button>
+        <button id="clearAll" class="danger" title="Remove all photos in the current assessment">Clear</button>
       </div>
     </header>
 
+    <section class="assessment-bar">
+      <label for="assessmentSelect">Assessment</label>
+      <select id="assessmentSelect"></select>
+      <button id="renameAssessment" title="Rename this assessment">✎</button>
+      <button id="deleteAssessment" class="danger" title="Delete this assessment">🗑</button>
+    </section>
+
     <p class="hint">
-      Right‑click any image on a webpage and choose
-      <strong>Add to EPC photo evidence</strong> to file it under a tag (or
-      pick <em>Choose multiple tags…</em> for cross‑tagging). You can also
-      drag images directly into a tag below, use <strong>Scan tab</strong>
-      on an <code>energytrust.assessapp.com</code> page, or
-      <strong>Import file</strong> to pull images from a PDF or Word doc.
+      Right‑click any image and choose <strong>Add to EPC photo evidence</strong>,
+      drag images into a tag, use <strong>Scan</strong> on an
+      <code>energytrust.assessapp.com</code> page, or
+      <strong>Import</strong> to pull images out of a PDF or Word doc.
+      Each assessment is detected from the page heading and saved separately.
     </p>
 
     <div class="filterbar">
-      <label for="tagFilter">View:</label>
       <select id="tagFilter">
         <option value="__all">All tags</option>
         <option value="__nonempty">Only tags with photos</option>
@@ -41,11 +45,12 @@
         hidden
       />
       <button id="importBtn" title="Extract images from a PDF or Word file">
-        Import file
+        Import
       </button>
       <button id="importUrlBtn" title="Fetch a PDF or image from a URL">
-        From URL
+        URL
       </button>
+      <button id="addCategory" title="Add a custom tag">+ Tag</button>
     </div>
 
     <section id="floorplanPinned" class="pinned" hidden>
@@ -66,11 +71,13 @@
       <header class="detected-header">
         <h2>Detected on page <span id="detectedCount">0</span></h2>
         <div class="detected-actions">
-          <select id="detectedAssign"></select>
-          <button id="detectedAssignAll" title="Assign every detected photo">Send all</button>
           <button id="detectedClose" title="Hide">×</button>
         </div>
       </header>
+      <p class="detected-hint">
+        Click any thumbnail to tag it. Use ‹ › or arrow keys to step through;
+        new images that aren't already in this assessment are marked <span class="new-pill-demo">NEW</span>.
+      </p>
       <ul id="detectedList"></ul>
     </section>
 
@@ -82,7 +89,11 @@
           <button class="toggle" aria-label="Collapse">▸</button>
           <h2 class="title" contenteditable="true" spellcheck="false"></h2>
           <span class="count">0</span>
-          <button class="remove" title="Remove category">×</button>
+          <div class="status-actions">
+            <button class="status-btn done" title="Mark evidence complete" aria-pressed="false">✓</button>
+            <button class="status-btn na" title="Not applicable" aria-pressed="false">N/A</button>
+          </div>
+          <button class="remove" title="Remove tag">×</button>
         </header>
         <div class="category-body">
           <p class="guidance"></p>

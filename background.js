@@ -1,6 +1,7 @@
 const STORAGE_KEY = "epcPhotoState";
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 4;
 const PENDING_KEY = "epcPendingMultiTag";
+const DEFAULT_KEY = "default";
 
 const TAGS = [
   {
@@ -20,8 +21,7 @@ const TAGS = [
   },
   {
     title: "Roof Construction",
-    guidance:
-      "Selections of all roof constructions selected for the building.",
+    guidance: "Selections of all roof constructions selected for the building.",
   },
   {
     title: "Loft Space Access",
@@ -89,7 +89,7 @@ const TAGS = [
   {
     title: "Additional Evidence",
     guidance:
-      "Any other key feature of the building or limitation whose presence or absence may be reasonably considered likely to affect the SAP rating, or which would be required to support any claim made in the report that could be subsequently queried or be the subject of a complaint.",
+      "Any other key feature of the building or limitation whose presence or absence may be reasonably considered likely to affect the SAP rating, or which would be required to support any claim made in the report that could be subsequently queried or be the subject of a complaint",
   },
 ];
 
@@ -102,6 +102,90 @@ const TAG_ID = (title) =>
 
 const uid = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+function assessmentKey(meta) {
+  if (!meta) return DEFAULT_KEY;
+  const norm = (s) => (s || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const studentName = norm(meta.studentName);
+  const title = norm(meta.title);
+  if (!studentName && !title) return DEFAULT_KEY;
+  return `${studentName}|${title}`.slice(0, 200);
+}
+
+function seedCategories() {
+  return TAGS.map((t) => ({
+    id: uid(),
+    title: t.title,
+    guidance: t.guidance,
+    collapsed: true,
+    status: null,
+    photos: [],
+  }));
+}
+
+function defaultBucket(meta) {
+  return {
+    meta: meta || {
+      studentName: "",
+      title: "Default",
+      pageUrl: "",
+      pageTitle: "",
+    },
+    categories: seedCategories(),
+    lastSeen: Date.now(),
+  };
+}
+
+function migrate(existing) {
+  if (existing?.version === STORAGE_VERSION && existing.assessments) {
+    return existing;
+  }
+  // v2 / v3 had flat categories. Wrap them into a single Default bucket.
+  if (
+    Array.isArray(existing?.categories) &&
+    existing.categories.length
+  ) {
+    return {
+      version: STORAGE_VERSION,
+      currentKey: DEFAULT_KEY,
+      assessments: {
+        [DEFAULT_KEY]: {
+          meta: {
+            studentName: "",
+            title: "Default",
+            pageUrl: "",
+            pageTitle: "",
+          },
+          categories: existing.categories.map((c) => ({
+            id: c.id || uid(),
+            title: c.title,
+            guidance: c.guidance || "",
+            collapsed: c.collapsed ?? true,
+            status: c.status || null,
+            photos: c.photos || [],
+          })),
+          lastSeen: Date.now(),
+        },
+      },
+    };
+  }
+  return {
+    version: STORAGE_VERSION,
+    currentKey: DEFAULT_KEY,
+    assessments: { [DEFAULT_KEY]: defaultBucket() },
+  };
+}
+
+function getOrCreateBucket(state, key, meta) {
+  if (!state.assessments[key]) {
+    state.assessments[key] = defaultBucket(meta);
+  } else if (meta) {
+    // Refresh meta so it reflects the latest seen page heading.
+    state.assessments[key].meta = { ...state.assessments[key].meta, ...meta };
+  }
+  state.assessments[key].lastSeen = Date.now();
+  return state.assessments[key];
+}
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel
@@ -142,6 +226,17 @@ function buildContextMenus() {
   });
 }
 
+async function getContextForTab(tab) {
+  if (!tab?.id) return null;
+  try {
+    return await chrome.tabs.sendMessage(tab.id, {
+      type: "getAssessmentContext",
+    });
+  } catch (_) {
+    return null;
+  }
+}
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const id = String(info.menuItemId || "");
   if (!id.startsWith("epc-")) return;
@@ -151,11 +246,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     return;
   }
 
+  const meta = await getContextForTab(tab);
+  const key = assessmentKey(meta);
   const photo = await buildPhoto(url, tab);
 
   if (id === "epc-multi") {
     await chrome.storage.local.set({
-      [PENDING_KEY]: { photo, ts: Date.now() },
+      [PENDING_KEY]: { photo, ts: Date.now(), assessmentKey: key, meta },
     });
     if (tab?.windowId != null) {
       try {
@@ -169,7 +266,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   const tag = TAGS.find((t) => TAG_ID(t.title) === id);
   if (!tag) return;
-  await addPhotoToTags(photo, [tag.title]);
+  await addPhotoToTags(photo, [tag.title], key, meta);
 });
 
 async function buildPhoto(url, tab) {
@@ -203,11 +300,12 @@ function blobToDataUrl(blob) {
   });
 }
 
-async function addPhotoToTags(photo, tagTitles) {
+async function addPhotoToTags(photo, tagTitles, key, meta) {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
-  const state = ensureState(stored[STORAGE_KEY]);
+  const state = migrate(stored[STORAGE_KEY]);
+  const bucket = getOrCreateBucket(state, key, meta);
   for (const title of tagTitles) {
-    let cat = state.categories.find((c) => c.title === title);
+    let cat = bucket.categories.find((c) => c.title === title);
     if (!cat) {
       const def = TAGS.find((t) => t.title === title);
       cat = {
@@ -215,30 +313,16 @@ async function addPhotoToTags(photo, tagTitles) {
         title,
         guidance: def?.guidance || "",
         collapsed: true,
+        status: null,
         photos: [],
       };
-      state.categories.push(cat);
+      bucket.categories.push(cat);
     }
     cat.photos.push({ ...photo, id: uid() });
   }
+  state.currentKey = key;
   await chrome.storage.local.set({ [STORAGE_KEY]: state });
   notify(`Added to: ${tagTitles.join(", ")}`);
-}
-
-function ensureState(existing) {
-  if (existing?.version === STORAGE_VERSION && Array.isArray(existing.categories)) {
-    return existing;
-  }
-  return {
-    version: STORAGE_VERSION,
-    categories: TAGS.map((t) => ({
-      id: uid(),
-      title: t.title,
-      guidance: t.guidance,
-      collapsed: true,
-      photos: [],
-    })),
-  };
 }
 
 function notify(message) {

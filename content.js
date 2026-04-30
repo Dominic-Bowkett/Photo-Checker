@@ -10,6 +10,18 @@
     return dataSrc || "";
   };
 
+  // URLs we never want to surface from a Scan tab — froala/giphy decoration,
+  // the assessapp logo, etc. Tested case-insensitive against the full URL.
+  const DENY_PATTERNS = [
+    /froala/i,
+    /giphy/i,
+    /\/assets\/(?:logo|icon|spinner|placeholder)/i,
+    /\.svg(?:\?|$)/i,
+  ];
+
+  const isDeniedUrl = (url) =>
+    !!url && DENY_PATTERNS.some((re) => re.test(url));
+
   document.addEventListener(
     "dragstart",
     (e) => {
@@ -72,6 +84,7 @@
     const url = resolveSrc(img);
     if (!url) return false;
     if (/^data:image\/svg/i.test(url)) return false;
+    if (isDeniedUrl(url)) return false;
     const w = img.naturalWidth || img.width || 0;
     const h = img.naturalHeight || img.height || 0;
     if (w && w < 60) return false;
@@ -128,12 +141,46 @@
     return { photos, anchor: true };
   };
 
+  // Assessment context: read student name and assessment title from the
+  // page heading on assessapp pages.
+  // <div class="page-heading">
+  //   <h3 class="truncate">Student Name</h3>
+  //   <h5 class="hint-text truncate">Assessment Title</h5>
+  // </div>
+  const getAssessmentContext = () => {
+    const heading = document.querySelector(".page-heading");
+    if (!heading) return null;
+    const studentName = norm(
+      heading.querySelector("h3.truncate")?.textContent || ""
+    );
+    const title = norm(
+      heading.querySelector(
+        "h5.hint-text.truncate, h5.truncate.hint-text, h5.hint-text, h5.truncate"
+      )?.textContent || ""
+    );
+    if (!studentName && !title) return null;
+    return {
+      studentName,
+      title,
+      pageUrl: location.href,
+      pageTitle: document.title,
+    };
+  };
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === "findEpcPhotos") {
       try {
         sendResponse(findEpcPhotos());
       } catch (err) {
         sendResponse({ photos: [], error: String(err) });
+      }
+      return false;
+    }
+    if (msg?.type === "getAssessmentContext") {
+      try {
+        sendResponse(getAssessmentContext());
+      } catch (err) {
+        sendResponse(null);
       }
       return false;
     }
