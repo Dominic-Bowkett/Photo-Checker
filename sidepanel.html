@@ -46,11 +46,8 @@
         multiple
         hidden
       />
-      <button id="importBtn" title="Extract images from a PDF or Word file">
+      <button id="importBtn" title="Import photos from a URL, PDF or Word doc">
         Import
-      </button>
-      <button id="importUrlBtn" title="Fetch a PDF or image from a URL">
-        URL
       </button>
       <button id="addCategory" title="Add a custom tag">+ Tag</button>
     </div>
@@ -172,6 +169,41 @@
       </div>
     </div>
 
+    <div id="importModal" class="modal" hidden>
+      <div class="modal-card">
+        <header>
+          <h2>Import photos</h2>
+          <button id="importModalClose" title="Close">×</button>
+        </header>
+        <div class="import-body">
+          <label for="importUrl">From URL</label>
+          <input
+            id="importUrl"
+            type="url"
+            placeholder="https://… (image, PDF, or DOCX)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="import-row">
+            <button id="importUrlGo" class="primary">Fetch URL</button>
+            <span id="importStatus" class="import-status"></span>
+          </div>
+
+          <hr class="import-divider" />
+
+          <label>From file</label>
+          <p class="settings-hint">
+            PDF, DOCX or image files. Embedded images will be extracted and
+            shown in the Detected pane for tagging.
+          </p>
+          <button id="importPickFile">Choose file…</button>
+        </div>
+        <footer>
+          <button id="importDone" class="primary">Done</button>
+        </footer>
+      </div>
+    </div>
+
     <div id="settingsModal" class="modal" hidden>
       <div class="modal-card">
         <header>
@@ -239,7 +271,9 @@
       <button id="lightboxClose" title="Close (Esc)" aria-label="Close">×</button>
       <div id="lightboxTags" hidden></div>
       <button id="lightboxPrev" title="Previous (←)" aria-label="Previous">‹</button>
-      <img id="lightboxImg" alt="" />
+      <div id="lightboxImgWrap" class="lightbox-imgwrap">
+        <img id="lightboxImg" alt="" />
+      </div>
       <button id="lightboxNext" title="Next (→)" aria-label="Next">›</button>
       <div id="lightboxCaption"></div>
     </div>

@@ -302,8 +302,10 @@ async function detectActiveTabAssessment() {
   const key = assessmentKeyFromMeta(meta);
   if (key === DEFAULT_KEY) return;
   ensureBucket(key, meta);
-  if (state.currentKey !== key) {
+  const switched = state.currentKey !== key;
+  if (switched) {
     state.currentKey = key;
+    clearDetected();
   }
   await save();
   render();
@@ -1134,6 +1136,19 @@ $("#summaryCopy").addEventListener("click", async () => {
   }
 });
 
+function clearDetected() {
+  detected = [];
+  if (typeof detectedListEl !== "undefined" && detectedListEl) {
+    detectedListEl.innerHTML = "";
+  }
+  if (typeof detectedEl !== "undefined" && detectedEl) {
+    detectedEl.hidden = true;
+  }
+  if (typeof refreshDetectedAutoTagVisibility === "function") {
+    refreshDetectedAutoTagVisibility();
+  }
+}
+
 const detectedEl = $("#detected");
 const detectedListEl = $("#detectedList");
 const detectedCountEl = $("#detectedCount");
@@ -1292,6 +1307,7 @@ $("#multiTagSave").addEventListener("click", async () => {
   }
   await save();
   render();
+  if (detected.length) showDetected(detected);
   closeMultiTagModal(true);
 });
 
@@ -1333,6 +1349,8 @@ function openLightbox(items, index) {
 function showLightbox() {
   const item = lightboxItems[lightboxIndex];
   if (!item) return;
+  // Reset zoom whenever we change image.
+  document.getElementById("lightboxImgWrap")?.classList.remove("zoomed");
   lightboxImg.src = item.dataUrl || item.url;
   lightboxImg.alt = item.alt || "";
   const parts = [];
@@ -1404,6 +1422,9 @@ async function togglePillForItem(item, cat, btn) {
   }
   await save();
   render();
+  // Re-render the detected strip so the NEW/tagged badges reflect the new
+  // membership immediately.
+  if (detected.length) showDetected(detected);
 }
 
 function closeLightbox() {
@@ -1418,6 +1439,25 @@ function stepLightbox(delta) {
     (lightboxIndex + delta + lightboxItems.length) % lightboxItems.length;
   showLightbox();
 }
+
+// Click image to toggle between fit-to-window and 100% (scrollable).
+document
+  .getElementById("lightboxImgWrap")
+  ?.addEventListener("click", (e) => {
+    if (e.target.id !== "lightboxImg") return;
+    const wrap = document.getElementById("lightboxImgWrap");
+    wrap.classList.toggle("zoomed");
+    if (wrap.classList.contains("zoomed")) {
+      // Center the click point in the scroll viewport.
+      requestAnimationFrame(() => {
+        const img = lightboxImg;
+        const cx = e.offsetX || img.naturalWidth / 2;
+        const cy = e.offsetY || img.naturalHeight / 2;
+        wrap.scrollLeft = cx - wrap.clientWidth / 2;
+        wrap.scrollTop = cy - wrap.clientHeight / 2;
+      });
+    }
+  });
 
 $("#lightboxClose").addEventListener("click", closeLightbox);
 $("#lightboxPrev").addEventListener("click", () => stepLightbox(-1));
@@ -1495,7 +1535,113 @@ searchBoxEl.addEventListener("input", applyFilters);
 
 const importBtn = $("#importBtn");
 const importInput = $("#importFile");
-importBtn.addEventListener("click", () => importInput.click());
+const importModal = $("#importModal");
+const importUrlEl = $("#importUrl");
+const importStatusEl = $("#importStatus");
+
+function openImportModal() {
+  importUrlEl.value = "";
+  importStatusEl.textContent = "";
+  importModal.hidden = false;
+  setTimeout(() => importUrlEl.focus(), 0);
+}
+function closeImportModal() {
+  importModal.hidden = true;
+}
+
+importBtn.addEventListener("click", openImportModal);
+$("#importModalClose").addEventListener("click", closeImportModal);
+$("#importDone").addEventListener("click", closeImportModal);
+$("#importPickFile").addEventListener("click", () => importInput.click());
+
+$("#importUrlGo").addEventListener("click", async () => {
+  const url = importUrlEl.value.trim();
+  if (!url) return;
+  importStatusEl.textContent = "Fetching…";
+  try {
+    const photos = await importFromUrl(url);
+    if (!photos.length) {
+      importStatusEl.textContent = "No images found.";
+      return;
+    }
+    showDetected([...(detected || []), ...photos]);
+    importStatusEl.textContent = `Added ${photos.length} photo${
+      photos.length === 1 ? "" : "s"
+    }.`;
+    importUrlEl.value = "";
+  } catch (err) {
+    console.error("URL import failed", err);
+    importStatusEl.textContent = `Error: ${err?.message || err}`;
+  }
+});
+importUrlEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("#importUrlGo").click();
+  }
+});
+
+async function importFromUrl(url) {
+  // Use the background fetcher to dodge CORS for cross-origin images.
+  let blob;
+  let contentType = "";
+  let filename = url.split("/").pop().split("?")[0] || "download";
+  try {
+    const res = await fetch(url, { credentials: "include" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    contentType = res.headers.get("content-type") || "";
+    blob = await res.blob();
+  } catch (err) {
+    // Fall back to background data URL fetch (handles CORS-blocked images).
+    const fetched = await fetchAsDataUrl(url);
+    if (!fetched?.dataUrl) throw err;
+    return [
+      {
+        url,
+        dataUrl: await downscaleDataUrl(fetched.dataUrl),
+        pageTitle: filename,
+        pageUrl: url,
+        alt: "",
+        section: "URL import",
+      },
+    ];
+  }
+  // Force the right extractor by sniffing extension and content-type.
+  const lower = url.toLowerCase();
+  if (lower.endsWith(".pdf") || /pdf/i.test(contentType)) {
+    return extractFromPdf(blobAsFile(blob, filename || "download.pdf"));
+  }
+  if (lower.endsWith(".docx") || /wordprocessingml/i.test(contentType)) {
+    return extractFromDocx(blobAsFile(blob, filename || "download.docx"));
+  }
+  if (
+    blob.type.startsWith("image/") ||
+    /^image\//i.test(contentType) ||
+    /\.(jpe?g|png|gif|webp|bmp)$/i.test(lower)
+  ) {
+    const dataUrl = await blobToDataUrl(blob);
+    return [
+      {
+        url,
+        dataUrl: await downscaleDataUrl(dataUrl),
+        pageTitle: filename,
+        pageUrl: url,
+        alt: "",
+        section: "URL import",
+      },
+    ];
+  }
+  throw new Error("Unsupported content type: " + (contentType || "unknown"));
+}
+
+function blobAsFile(blob, name) {
+  // Re-wrap so extractFromDocx/extractFromPdf can use file.name + arrayBuffer.
+  return Object.assign(blob, {
+    name,
+    arrayBuffer: () => blob.arrayBuffer(),
+  });
+}
+
 importInput.addEventListener("change", async (e) => {
   const files = [...(e.target.files || [])];
   if (!files.length) return;
@@ -1513,6 +1659,7 @@ importInput.addEventListener("change", async (e) => {
     }
   }
   importInput.value = "";
+  closeImportModal();
 });
 
 $("#importUrlBtn").addEventListener("click", async () => {
@@ -1761,6 +1908,7 @@ document
   .addEventListener("change", async (e) => {
     state.currentKey = e.target.value;
     ensureBucket(state.currentKey);
+    clearDetected();
     await save();
     render();
   });
@@ -1977,6 +2125,7 @@ async function autoTagItem(item, btn) {
     await save();
     render();
     renderLightboxPills(item);
+    if (detected.length) showDetected(detected);
     btn.textContent = added
       ? `✨ +${added} tag${added === 1 ? "" : "s"}`
       : "✨ No new tags";
