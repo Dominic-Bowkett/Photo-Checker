@@ -1635,11 +1635,7 @@ async function importFromUrl(url) {
 }
 
 function blobAsFile(blob, name) {
-  // Re-wrap so extractFromDocx/extractFromPdf can use file.name + arrayBuffer.
-  return Object.assign(blob, {
-    name,
-    arrayBuffer: () => blob.arrayBuffer(),
-  });
+  return new File([blob], name, { type: blob.type });
 }
 
 importInput.addEventListener("change", async (e) => {
