@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EPC Photo Organiser</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>EPC Photo Organiser</h1>
+      <div class="actions">
+        <button id="addCategory" title="Add a custom category">+ Category</button>
+        <button id="exportAll" title="Download all photos">Export</button>
+        <button id="clearAll" class="danger" title="Remove all photos">Clear</button>
+      </div>
+    </header>
+
+    <p class="hint">
+      Drag any image from the active tab into a category below. Photos are saved locally.
+    </p>
+
+    <main id="categories"></main>
+
+    <template id="categoryTemplate">
+      <section class="category" data-id="">
+        <header class="category-header">
+          <button class="toggle" aria-label="Collapse">▾</button>
+          <h2 class="title" contenteditable="true" spellcheck="false"></h2>
+          <span class="count">0</span>
+          <button class="remove" title="Remove category">×</button>
+        </header>
+        <div class="dropzone" tabindex="0">
+          <p class="dropzone-hint">Drop photos here</p>
+          <ul class="photos"></ul>
+        </div>
+      </section>
+    </template>
+
+    <template id="photoTemplate">
+      <li class="photo" draggable="false">
+        <img alt="" />
+        <div class="photo-meta">
+          <span class="photo-source"></span>
+          <button class="photo-download" title="Download">⬇</button>
+          <button class="photo-remove" title="Remove">×</button>
+        </div>
+      </li>
+    </template>
+
+    <script src="sidepanel.js" type="module"></script>
+  </body>
+</html>
