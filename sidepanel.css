@@ -689,6 +689,50 @@ main {
   font-weight: 600;
 }
 
+.summary-body {
+  padding: 12px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.summary-body h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--charcoal);
+}
+
+.summary-body .met h3 {
+  color: #166534;
+}
+
+.summary-body .missing h3 {
+  color: #b91c1c;
+}
+
+.summary-body p {
+  margin: 0;
+}
+
+.summary-body ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.summary-body li {
+  margin: 2px 0;
+}
+
+.summary-body .none {
+  color: var(--muted);
+  font-style: italic;
+}
+
 .modal-card footer .primary:hover {
   background: var(--yellow-dark);
   border-color: var(--yellow-dark);

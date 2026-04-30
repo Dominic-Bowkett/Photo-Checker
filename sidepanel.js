@@ -441,13 +441,6 @@ function renderCategory(cat) {
     await save();
   });
 
-  $(".remove", node).addEventListener("click", async () => {
-    if (!confirm(`Remove tag "${cat.title}" and all its photos?`)) return;
-    getBucket().categories = getBucket().categories.filter((c) => c.id !== cat.id);
-    await save();
-    render();
-  });
-
   // Status (Done / N/A) toggles, visible even when collapsed.
   node.dataset.status = cat.status || "";
   const doneBtn = node.querySelector(".status-btn.done");
@@ -664,9 +657,288 @@ $("#clearAll").addEventListener("click", async () => {
   render();
 });
 
-$("#exportAll").addEventListener("click", () => {
-  for (const cat of getBucket().categories) {
-    for (const photo of cat.photos) downloadPhoto(cat, photo);
+$("#exportAll").addEventListener("click", () => exportZip());
+
+const ZIP_CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let c = ~0 >>> 0;
+  for (let i = 0; i < bytes.length; i++) {
+    c = (c >>> 8) ^ ZIP_CRC_TABLE[(c ^ bytes[i]) & 0xff];
+  }
+  return (~c) >>> 0;
+}
+
+function safeName(s) {
+  return (s || "untitled")
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, " ")
+    .trim() || "untitled";
+}
+
+function dataUrlToBytes(dataUrl) {
+  const i = dataUrl.indexOf(",");
+  if (i < 0) return null;
+  const meta = dataUrl.slice(5, i);
+  const isB64 = /;base64$/i.test(meta);
+  const payload = dataUrl.slice(i + 1);
+  if (isB64) {
+    const bin = atob(payload);
+    const out = new Uint8Array(bin.length);
+    for (let j = 0; j < bin.length; j++) out[j] = bin.charCodeAt(j);
+    return out;
+  }
+  return new TextEncoder().encode(decodeURIComponent(payload));
+}
+
+function buildZip(entries) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  let cdSize = 0;
+
+  for (const e of entries) {
+    const nameBytes = enc.encode(e.name);
+    const data = e.bytes;
+    const crc = crc32(data);
+
+    const lh = new Uint8Array(30);
+    const lv = new DataView(lh.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true);
+    lv.setUint16(6, 0, true);
+    lv.setUint16(8, 0, true);
+    lv.setUint16(10, 0, true);
+    lv.setUint16(12, 0, true);
+    lv.setUint16(14, 0, true);
+    lv.setUint32(16, crc, true);
+    lv.setUint32(20, data.length, true);
+    lv.setUint32(24, data.length, true);
+    lv.setUint16(28, nameBytes.length, true);
+    parts.push(lh, nameBytes, data);
+
+    const cd = new Uint8Array(46);
+    const cv = new DataView(cd.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(12, 0, true);
+    cv.setUint16(14, 0, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint32(42, offset, true);
+    central.push(cd, nameBytes);
+    cdSize += 46 + nameBytes.length;
+
+    offset += 30 + nameBytes.length + data.length;
+  }
+
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, entries.length, true);
+  ev.setUint16(10, entries.length, true);
+  ev.setUint32(12, cdSize, true);
+  ev.setUint32(16, offset, true);
+
+  return new Blob([...parts, ...central, eocd], { type: "application/zip" });
+}
+
+async function fetchBytes(url) {
+  if (!url) return null;
+  if (url.startsWith("data:")) return dataUrlToBytes(url);
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return new Uint8Array(await res.arrayBuffer());
+  } catch (_) {
+    return null;
+  }
+}
+
+async function exportZip() {
+  const bucket = getBucket();
+  const meta = bucket.meta || {};
+  const baseName =
+    [safeName(meta.studentName), safeName(meta.title)]
+      .filter((s) => s && s !== "untitled")
+      .join(" - ") || "EPC Photo Evidence";
+
+  const entries = [];
+  let skipped = 0;
+  for (const cat of bucket.categories) {
+    if (!cat.photos.length) continue;
+    const folder = safeName(cat.title);
+    let i = 1;
+    for (const photo of cat.photos) {
+      const src = photo.dataUrl || photo.url;
+      const bytes = await fetchBytes(src);
+      if (!bytes) {
+        skipped++;
+        continue;
+      }
+      const ext = guessExt(src);
+      const num = String(i).padStart(2, "0");
+      i++;
+      entries.push({
+        name: `${baseName}/${folder}/${num}-${photo.id}.${ext}`,
+        bytes,
+      });
+    }
+  }
+
+  if (!entries.length) {
+    alert("No photos to export in this assessment.");
+    return;
+  }
+
+  const blob = buildZip(entries);
+  const url = URL.createObjectURL(blob);
+  chrome.downloads.download(
+    { url, filename: `${baseName}.zip`, saveAs: false },
+    () => {
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+  );
+  if (skipped) {
+    setTimeout(
+      () =>
+        alert(
+          `Exported ${entries.length} photo${
+            entries.length === 1 ? "" : "s"
+          }. ${skipped} could not be fetched and were skipped.`
+        ),
+      100
+    );
+  }
+}
+
+const summaryModal = $("#summaryModal");
+const summaryBody = $("#summaryBody");
+
+function buildSummary() {
+  const cats = getBucket().categories;
+  const met = cats.filter((c) => c.status === "done").map((c) => c.title);
+  const missing = cats
+    .filter((c) => c.status !== "done" && c.status !== "na")
+    .map((c) => c.title);
+  return { met, missing };
+}
+
+function renderSummary() {
+  const { met, missing } = buildSummary();
+  const bucket = getBucket();
+  const heading = bucketLabel(bucket, state.currentKey);
+  summaryBody.innerHTML = "";
+
+  const headerEl = document.createElement("p");
+  headerEl.innerHTML = `<strong>${escapeHtml(heading)}</strong>`;
+  summaryBody.appendChild(headerEl);
+
+  const metEl = document.createElement("section");
+  metEl.className = "met";
+  metEl.innerHTML = `<h3>Met</h3>`;
+  if (met.length) {
+    const p = document.createElement("p");
+    p.textContent = `You have met the photo evidence requirements for: ${met.join(
+      ", "
+    )}.`;
+    metEl.appendChild(p);
+  } else {
+    const p = document.createElement("p");
+    p.className = "none";
+    p.textContent = "No categories ticked as complete yet.";
+    metEl.appendChild(p);
+  }
+  summaryBody.appendChild(metEl);
+
+  const missEl = document.createElement("section");
+  missEl.className = "missing";
+  missEl.innerHTML = `<h3>Outstanding</h3>`;
+  if (missing.length) {
+    const p = document.createElement("p");
+    p.textContent = `You need to provide sufficient photo evidence for these categories: ${missing.join(
+      ", "
+    )}.`;
+    missEl.appendChild(p);
+  } else {
+    const p = document.createElement("p");
+    p.className = "none";
+    p.textContent = "Nothing outstanding — every category is either ticked or marked N/A.";
+    missEl.appendChild(p);
+  }
+  summaryBody.appendChild(missEl);
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[c]));
+}
+
+function summaryAsText() {
+  const { met, missing } = buildSummary();
+  const lines = [];
+  lines.push(bucketLabel(getBucket(), state.currentKey));
+  lines.push("");
+  if (met.length) {
+    lines.push(
+      `You have met the photo evidence requirements for: ${met.join(", ")}.`
+    );
+  } else {
+    lines.push("No categories ticked as complete yet.");
+  }
+  lines.push("");
+  if (missing.length) {
+    lines.push(
+      `You need to provide sufficient photo evidence for these categories: ${missing.join(
+        ", "
+      )}.`
+    );
+  } else {
+    lines.push(
+      "Nothing outstanding — every category is either ticked or marked N/A."
+    );
+  }
+  return lines.join("\n");
+}
+
+$("#summaryBtn").addEventListener("click", () => {
+  renderSummary();
+  summaryModal.hidden = false;
+});
+$("#summaryClose").addEventListener("click", () => {
+  summaryModal.hidden = true;
+});
+$("#summaryDismiss").addEventListener("click", () => {
+  summaryModal.hidden = true;
+});
+$("#summaryCopy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(summaryAsText());
+    const btn = $("#summaryCopy");
+    const orig = btn.textContent;
+    btn.textContent = "Copied";
+    setTimeout(() => (btn.textContent = orig), 1200);
+  } catch (_) {
+    alert(summaryAsText());
   }
 });
 
