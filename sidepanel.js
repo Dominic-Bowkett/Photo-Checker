@@ -382,6 +382,7 @@ function renderFloorplanPinned() {
   const img = document.getElementById("floorplanImg");
   const empty = section.querySelector(".pinned-empty");
   const expand = document.getElementById("floorplanExpand");
+  const checkBtn = document.getElementById("floorplanCheck");
   const cat = findFloorplanCategory();
   section.hidden = false;
   if (!cat || !cat.photos.length) {
@@ -389,6 +390,7 @@ function renderFloorplanPinned() {
     img.removeAttribute("src");
     empty.hidden = false;
     expand.hidden = true;
+    if (checkBtn) checkBtn.hidden = true;
     return;
   }
   const photo = cat.photos[cat.photos.length - 1];
@@ -399,6 +401,10 @@ function renderFloorplanPinned() {
   expand.hidden = false;
   img.onclick = () => openLightbox(cat.photos, cat.photos.length - 1);
   expand.onclick = () => openLightbox(cat.photos, cat.photos.length - 1);
+  if (checkBtn) {
+    checkBtn.hidden = !settings?.claudeApiKey;
+    checkBtn.onclick = () => runFloorplanCheck(photo);
+  }
 }
 
 function renderCategory(cat) {
@@ -1852,6 +1858,246 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
     } photo${items.length - failures === 1 ? "" : "s"}` +
       (failures ? `, ${failures} failed.` : ".")
   );
+});
+
+// ---- Floorplan check (Claude vision) -----------------------------------
+const FLOORPLAN_CHECKS = [
+  {
+    id: "envelope",
+    label: "Outer envelope of all levels of all parts of the dwelling shown",
+  },
+  {
+    id: "extensions",
+    label:
+      "Extensions, conservatories, rooms in the roof and unheated corridors shown separately (or marked N/A if none)",
+  },
+  {
+    id: "dimensions",
+    label:
+      "Dimensions present and sufficient to verify floor area, heat-loss perimeter and ceiling height",
+  },
+  {
+    id: "heatloss",
+    label: "Walls forming the heat-loss perimeter clearly marked",
+  },
+  {
+    id: "arrows",
+    label:
+      "Dimension arrows extend the full measurement so each dimension is unambiguous",
+  },
+  {
+    id: "rooms",
+    label: "Basic room layout included so the room count can be verified",
+  },
+];
+
+const floorplanModal = $("#floorplanCheckModal");
+const floorplanBody = $("#floorplanCheckBody");
+let lastFloorplanResult = null;
+
+function statusIcon(s) {
+  switch (s) {
+    case "pass":
+      return "✓";
+    case "fail":
+      return "✗";
+    case "unclear":
+      return "?";
+    case "na":
+      return "–";
+    default:
+      return "·";
+  }
+}
+
+function renderFloorplanResult(result) {
+  floorplanBody.innerHTML = "";
+  if (!result) {
+    const p = document.createElement("p");
+    p.className = "empty";
+    p.textContent = "No result yet.";
+    floorplanBody.appendChild(p);
+    return;
+  }
+  if (result.overall) {
+    const o = document.createElement("p");
+    o.className = "overall";
+    o.textContent = result.overall;
+    floorplanBody.appendChild(o);
+  }
+  const byId = new Map(
+    (result.checks || []).map((c) => [String(c.id || "").toLowerCase(), c])
+  );
+  for (const def of FLOORPLAN_CHECKS) {
+    const found = byId.get(def.id) || {};
+    const status = ["pass", "fail", "unclear", "na"].includes(found.status)
+      ? found.status
+      : "unclear";
+    const row = document.createElement("div");
+    row.className = "check";
+    row.dataset.status = status;
+    const icon = document.createElement("div");
+    icon.className = "icon";
+    icon.textContent = statusIcon(status);
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = def.label;
+    row.appendChild(icon);
+    row.appendChild(label);
+    if (found.note) {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = found.note;
+      row.appendChild(note);
+    }
+    floorplanBody.appendChild(row);
+  }
+}
+
+function floorplanResultAsText(result) {
+  const lines = ["Floorplan check"];
+  if (result?.overall) {
+    lines.push("");
+    lines.push(result.overall);
+  }
+  lines.push("");
+  const byId = new Map(
+    (result?.checks || []).map((c) => [String(c.id || "").toLowerCase(), c])
+  );
+  for (const def of FLOORPLAN_CHECKS) {
+    const found = byId.get(def.id) || {};
+    const status = found.status || "unclear";
+    lines.push(`${statusIcon(status)} [${status.toUpperCase()}] ${def.label}`);
+    if (found.note) lines.push(`    ${found.note}`);
+  }
+  return lines.join("\n");
+}
+
+async function runFloorplanCheck(photo) {
+  if (!settings.claudeApiKey) {
+    alert("Set your Claude API key in Settings first (gear icon).");
+    return;
+  }
+
+  let dataUrl = photo.dataUrl;
+  if (!dataUrl || dataUrl === photo.url) {
+    const fetched = await fetchAsDataUrl(photo.url);
+    dataUrl = fetched?.dataUrl || dataUrl;
+  }
+  const m = dataUrl && dataUrl.match(/^data:(image\/[^;]+);base64,(.*)$/);
+  if (!m) {
+    alert("Could not load floorplan image data.");
+    return;
+  }
+  let mediaType = m[1];
+  if (mediaType === "image/jpg") mediaType = "image/jpeg";
+  const base64 = m[2];
+
+  const btn = document.getElementById("floorplanCheck");
+  const wasLabel = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Analysing…";
+  }
+
+  // Open the modal up-front in a loading state so the user gets feedback.
+  floorplanBody.innerHTML =
+    '<p class="empty">Asking Claude to review the floorplan…</p>';
+  floorplanModal.hidden = false;
+
+  const checklist = FLOORPLAN_CHECKS.map(
+    (c) => `- ${c.id}: ${c.label}`
+  ).join("\n");
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": settings.claudeApiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: settings.claudeModel || "claude-sonnet-4-6",
+        max_tokens: 900,
+        system:
+          "You are an EPC/RdSAP floorplan auditor. Examine the floorplan image and " +
+          "assess it against the listed requirements. For each requirement, return " +
+          "one of: pass (clearly met), fail (clearly missing or incorrect), unclear " +
+          "(can't tell from the image), or na (genuinely not applicable, e.g. no " +
+          "extensions in the dwelling). Keep notes concise (one sentence).\n\n" +
+          "Requirements:\n" +
+          checklist +
+          "\n\nReturn ONLY a JSON object with this shape, no prose:\n" +
+          '{"overall": "<one or two sentence summary>", "checks": [{"id": "<id>", "status": "pass|fail|unclear|na", "note": "<short note>"}, ...]}',
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mediaType,
+                  data: base64,
+                },
+              },
+              {
+                type: "text",
+                text: "Please assess this floorplan against the listed requirements and return the JSON.",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${errText.slice(0, 300)}`);
+    }
+    const data = await resp.json();
+    const text = data?.content?.[0]?.text || "";
+    const objMatch = text.match(/\{[\s\S]*\}/);
+    if (!objMatch) throw new Error(`Could not parse response: ${text.slice(0, 200)}`);
+    const result = JSON.parse(objMatch[0]);
+    lastFloorplanResult = result;
+    renderFloorplanResult(result);
+  } catch (err) {
+    console.error("Floorplan check failed", err);
+    floorplanBody.innerHTML = `<p class="empty">Floorplan check failed: ${(
+      err?.message || err
+    )
+      .toString()
+      .replace(/[<>&]/g, (c) =>
+        ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c])
+      )}</p>`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = wasLabel;
+    }
+  }
+}
+
+$("#floorplanCheckClose").addEventListener("click", () => {
+  floorplanModal.hidden = true;
+});
+$("#floorplanCheckDismiss").addEventListener("click", () => {
+  floorplanModal.hidden = true;
+});
+$("#floorplanCheckCopy").addEventListener("click", async () => {
+  if (!lastFloorplanResult) return;
+  const text = floorplanResultAsText(lastFloorplanResult);
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = $("#floorplanCheckCopy");
+    const wasLabel = btn.textContent;
+    btn.textContent = "Copied";
+    setTimeout(() => (btn.textContent = wasLabel), 1200);
+  } catch (_) {
+    alert(text);
+  }
 });
 
 loadSettings().then(load);

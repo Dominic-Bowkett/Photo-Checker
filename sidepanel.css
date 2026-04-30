@@ -441,7 +441,13 @@ main {
   letter-spacing: 0.04em;
 }
 
-.pinned > header button {
+.pinned-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pinned > header button:not(.ai-action) {
   border: none;
   background: transparent;
   font-size: 14px;
@@ -449,7 +455,7 @@ main {
   cursor: pointer;
 }
 
-.pinned > header button:hover {
+.pinned > header button:not(.ai-action):hover {
   background: transparent;
   color: var(--yellow);
 }
@@ -766,6 +772,85 @@ main {
   color: var(--muted);
   font-size: 11.5px;
   line-height: 1.4;
+}
+
+.modal-card.wide {
+  max-width: 480px;
+}
+
+.checklist-body {
+  padding: 12px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  max-height: 70vh;
+}
+
+.checklist-body .overall {
+  margin: 0 0 4px;
+  padding: 8px 10px;
+  background: #fff7c2;
+  border-left: 3px solid var(--yellow);
+  border-radius: 3px;
+  white-space: pre-wrap;
+}
+
+.checklist-body .check {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 6px 8px;
+  align-items: start;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.checklist-body .check[data-status="pass"] {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.checklist-body .check[data-status="fail"] {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.checklist-body .check[data-status="unclear"] {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.checklist-body .check[data-status="na"] {
+  border-color: var(--border);
+  background: #f6f7f8;
+  opacity: 0.85;
+}
+
+.checklist-body .icon {
+  font-size: 16px;
+  line-height: 1;
+  text-align: center;
+  padding-top: 2px;
+}
+
+.checklist-body .label {
+  font-weight: 600;
+  color: var(--black);
+}
+
+.checklist-body .note {
+  grid-column: 2;
+  margin: 0;
+  color: var(--charcoal);
+}
+
+.checklist-body .empty {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .summary-body {

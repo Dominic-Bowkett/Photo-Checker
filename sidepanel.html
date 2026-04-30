@@ -58,7 +58,17 @@
     <section id="floorplanPinned" class="pinned" hidden>
       <header>
         <h2>Floorplan</h2>
-        <button id="floorplanExpand" title="Open large view" hidden>⤢</button>
+        <div class="pinned-actions">
+          <button
+            id="floorplanCheck"
+            class="ai-action"
+            title="Use Claude to check the floorplan against RdSAP requirements"
+            hidden
+          >
+            ✨ Check
+          </button>
+          <button id="floorplanExpand" title="Open large view" hidden>⤢</button>
+        </div>
       </header>
       <div class="pinned-body">
         <img id="floorplanImg" alt="Floorplan" />
@@ -124,6 +134,20 @@
         </div>
       </li>
     </template>
+
+    <div id="floorplanCheckModal" class="modal" hidden>
+      <div class="modal-card wide">
+        <header>
+          <h2>Floorplan check</h2>
+          <button id="floorplanCheckClose" title="Close">×</button>
+        </header>
+        <div id="floorplanCheckBody" class="checklist-body"></div>
+        <footer>
+          <button id="floorplanCheckCopy">Copy to clipboard</button>
+          <button id="floorplanCheckDismiss" class="primary">Done</button>
+        </footer>
+      </div>
+    </div>
 
     <div id="settingsModal" class="modal" hidden>
       <div class="modal-card">
