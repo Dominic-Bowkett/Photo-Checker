@@ -519,6 +519,26 @@ main {
 .detected-actions {
   display: flex;
   gap: 4px;
+  align-items: center;
+}
+
+.ai-action {
+  background: #1f2937;
+  color: var(--yellow);
+  border: 1px solid var(--yellow);
+  font-weight: 700;
+  padding: 3px 8px;
+}
+
+.ai-action:hover {
+  background: #111827;
+  color: var(--yellow);
+  border-color: var(--yellow);
+}
+
+.ai-action[disabled] {
+  opacity: 0.6;
+  cursor: progress;
 }
 
 .detected-hint {

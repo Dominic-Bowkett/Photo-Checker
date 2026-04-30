@@ -1016,6 +1016,9 @@ function showDetected(photos) {
     });
     detectedListEl.appendChild(li);
   }
+  if (typeof refreshDetectedAutoTagVisibility === "function") {
+    refreshDetectedAutoTagVisibility();
+  }
 }
 
 $("#scanTab").addEventListener("click", async () => {
@@ -1674,104 +1677,108 @@ $("#settingsSave").addEventListener("click", async () => {
   settingsModal.hidden = true;
   // If the lightbox is open, refresh pills so the auto-tag button appears.
   if (!lightboxEl.hidden) renderLightboxPills(lightboxItems[lightboxIndex]);
+  refreshDetectedAutoTagVisibility();
 });
 
 // ---- Claude vision auto-tagging ----------------------------------------
-async function autoTagItem(item, btn) {
-  if (!settings.claudeApiKey) {
-    alert("Set your Claude API key in Settings first (gear icon).");
-    return;
-  }
-
-  // Make sure we have base64 data we can send.
+async function callClaudeForTags(item) {
   let dataUrl = item.dataUrl;
   if (!dataUrl || dataUrl === item.url) {
     const fetched = await fetchAsDataUrl(item.url);
     dataUrl = fetched?.dataUrl || item.dataUrl;
   }
   const m = dataUrl && dataUrl.match(/^data:(image\/[^;]+);base64,(.*)$/);
-  if (!m) {
-    alert("Could not load image data for AI analysis.");
-    return;
-  }
+  if (!m) throw new Error("no image data");
   let mediaType = m[1];
-  // Anthropic accepts jpeg/png/gif/webp; coerce jpg -> jpeg.
   if (mediaType === "image/jpg") mediaType = "image/jpeg";
   const base64 = m[2];
 
   const cats = getBucket().categories;
   const tagList = cats.map((c) => c.title);
 
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": settings.claudeApiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: settings.claudeModel || "claude-sonnet-4-6",
+      max_tokens: 300,
+      system:
+        "You are an EPC photo evidence categoriser for UK SAP/RdSAP assessments. " +
+        "Available categories: " +
+        tagList.map((t) => `"${t}"`).join(", ") +
+        ". Examine the image and respond with a JSON array of category names " +
+        "from the list that clearly apply (one or more). Use exact names. " +
+        "If nothing applies, return [].",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: mediaType, data: base64 },
+            },
+            {
+              type: "text",
+              text: "Which of the listed EPC categories apply to this photo? Respond only with the JSON array.",
+            },
+          ],
+        },
+      ],
+    }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`HTTP ${resp.status}: ${errText.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  const text = data?.content?.[0]?.text || "";
+  const arrMatch = text.match(/\[[\s\S]*?\]/);
+  if (!arrMatch) throw new Error(`Could not parse response: ${text.slice(0, 200)}`);
+  const suggestions = JSON.parse(arrMatch[0]);
+  if (!Array.isArray(suggestions)) throw new Error("Response was not a JSON array");
+  return { suggestions, dataUrl };
+}
+
+async function applySuggestions(item, suggestions, dataUrl) {
+  const cats = getBucket().categories;
+  const id = photoIdentity(item);
+  let added = 0;
+  for (const tag of suggestions) {
+    const cat = cats.find(
+      (c) => c.title.toLowerCase() === String(tag).toLowerCase()
+    );
+    if (!cat) continue;
+    if (cat.photos.some((p) => photoIdentity(p) === id)) continue;
+    cat.photos.push({
+      id: uid(),
+      url: item.url,
+      dataUrl,
+      pageUrl: item.pageUrl || "",
+      pageTitle: item.pageTitle || item.section || "",
+      alt: item.alt || "",
+      addedAt: Date.now(),
+    });
+    added++;
+  }
+  return added;
+}
+
+async function autoTagItem(item, btn) {
+  if (!settings.claudeApiKey) {
+    alert("Set your Claude API key in Settings first (gear icon).");
+    return;
+  }
   const wasLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = "Analysing…";
-
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": settings.claudeApiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-dangerous-direct-browser-access": "true",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: settings.claudeModel || "claude-sonnet-4-6",
-        max_tokens: 300,
-        system:
-          "You are an EPC photo evidence categoriser for UK SAP/RdSAP assessments. " +
-          "Available categories: " +
-          tagList.map((t) => `"${t}"`).join(", ") +
-          ". Examine the image and respond with a JSON array of category names " +
-          "from the list that clearly apply (one or more). Use exact names. " +
-          "If nothing applies, return [].",
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "image",
-                source: { type: "base64", media_type: mediaType, data: base64 },
-              },
-              {
-                type: "text",
-                text: "Which of the listed EPC categories apply to this photo? Respond only with the JSON array.",
-              },
-            ],
-          },
-        ],
-      }),
-    });
-    if (!resp.ok) {
-      const errText = await resp.text();
-      throw new Error(`HTTP ${resp.status}: ${errText.slice(0, 300)}`);
-    }
-    const data = await resp.json();
-    const text = data?.content?.[0]?.text || "";
-    const arrMatch = text.match(/\[[\s\S]*?\]/);
-    if (!arrMatch) throw new Error(`Could not parse response: ${text.slice(0, 200)}`);
-    const suggestions = JSON.parse(arrMatch[0]);
-    if (!Array.isArray(suggestions)) throw new Error("Response was not a JSON array");
-
-    let added = 0;
-    const id = photoIdentity(item);
-    for (const tag of suggestions) {
-      const cat = cats.find(
-        (c) => c.title.toLowerCase() === String(tag).toLowerCase()
-      );
-      if (!cat) continue;
-      if (cat.photos.some((p) => photoIdentity(p) === id)) continue;
-      cat.photos.push({
-        id: uid(),
-        url: item.url,
-        dataUrl,
-        pageUrl: item.pageUrl || "",
-        pageTitle: item.pageTitle || item.section || "",
-        alt: item.alt || "",
-        addedAt: Date.now(),
-      });
-      added++;
-    }
+    const { suggestions, dataUrl } = await callClaudeForTags(item);
+    const added = await applySuggestions(item, suggestions, dataUrl);
     await save();
     render();
     renderLightboxPills(item);
@@ -1787,5 +1794,64 @@ async function autoTagItem(item, btn) {
     btn.disabled = false;
   }
 }
+
+const detectedAutoTagBtn = $("#detectedAutoTag");
+
+function refreshDetectedAutoTagVisibility() {
+  if (!detectedAutoTagBtn) return;
+  const visible =
+    !!settings?.claudeApiKey && Array.isArray(detected) && detected.length > 0;
+  detectedAutoTagBtn.hidden = !visible;
+}
+
+detectedAutoTagBtn?.addEventListener("click", async () => {
+  if (!settings.claudeApiKey) {
+    alert("Set your Claude API key in Settings first (gear icon).");
+    return;
+  }
+  if (!detected.length) return;
+  if (
+    !confirm(
+      `Auto‑tag all ${detected.length} detected photo${
+        detected.length === 1 ? "" : "s"
+      }? Each one is sent to Claude in turn.`
+    )
+  ) {
+    return;
+  }
+
+  const wasLabel = detectedAutoTagBtn.textContent;
+  detectedAutoTagBtn.disabled = true;
+  let totalAdded = 0;
+  let failures = 0;
+  const items = detected.slice();
+  for (let i = 0; i < items.length; i++) {
+    detectedAutoTagBtn.textContent = `Tagging ${i + 1}/${items.length}…`;
+    try {
+      const { suggestions, dataUrl } = await callClaudeForTags(items[i]);
+      totalAdded += await applySuggestions(items[i], suggestions, dataUrl);
+    } catch (err) {
+      console.warn("Auto-tag failed for item", items[i]?.url, err);
+      failures++;
+    }
+    // Persist progressively so a long batch isn't lost on close.
+    await save();
+    if (i < items.length - 1) await new Promise((r) => setTimeout(r, 250));
+  }
+  render();
+  if (!lightboxEl.hidden && lightboxItems[lightboxIndex]) {
+    renderLightboxPills(lightboxItems[lightboxIndex]);
+  }
+  // Refresh the detected list so NEW/tagged states reflect the new memberships.
+  if (detected.length) showDetected(items);
+  detectedAutoTagBtn.disabled = false;
+  detectedAutoTagBtn.textContent = wasLabel;
+  alert(
+    `Auto‑tag complete. Added ${totalAdded} tag${totalAdded === 1 ? "" : "s"} across ${
+      items.length - failures
+    } photo${items.length - failures === 1 ? "" : "s"}` +
+      (failures ? `, ${failures} failed.` : ".")
+  );
+});
 
 loadSettings().then(load);
