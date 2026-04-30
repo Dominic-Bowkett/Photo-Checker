@@ -3,7 +3,7 @@
   "name": "EPC Photo Organiser",
   "version": "0.1.0",
   "description": "Drag photos from any webpage into EPC assessment evidence categories in the side panel.",
-  "permissions": ["sidePanel", "storage", "downloads", "activeTab", "scripting", "contextMenus"],
+  "permissions": ["sidePanel", "storage", "unlimitedStorage", "downloads", "activeTab", "scripting", "contextMenus"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"

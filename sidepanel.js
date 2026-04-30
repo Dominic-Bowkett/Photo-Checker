@@ -311,7 +311,18 @@ async function detectActiveTabAssessment() {
 
 async function save() {
   suppressNextStorageEvent = true;
-  await chrome.storage.local.set({ [STORAGE_KEY]: state });
+  try {
+    await chrome.storage.local.set({ [STORAGE_KEY]: state });
+  } catch (err) {
+    suppressNextStorageEvent = false;
+    if (/quota/i.test(err?.message || "")) {
+      console.error("[EPC] Storage quota exceeded", err);
+      alert(
+        "Chrome storage quota was exceeded. Reload the extension at chrome://extensions to pick up the new unlimitedStorage permission, or clear some photos. Your most recent change wasn't saved."
+      );
+    }
+    throw err;
+  }
 }
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
@@ -639,7 +650,8 @@ async function extractDroppedImages(dataTransfer) {
 
   for (const file of dataTransfer.files || []) {
     if (file.type.startsWith("image/")) {
-      const dataUrl = await fileToDataUrl(file);
+      const rawUrl = await fileToDataUrl(file);
+      const dataUrl = await downscaleDataUrl(rawUrl);
       out.push({
         id: uid(),
         url: file.name,
@@ -662,10 +674,11 @@ async function extractDroppedImages(dataTransfer) {
 
   if (candidate && /^https?:|^data:|^blob:/.test(candidate)) {
     const fetched = await fetchAsDataUrl(candidate);
+    const compact = await downscaleDataUrl(fetched?.dataUrl || candidate);
     out.push({
       id: uid(),
       url: candidate,
-      dataUrl: fetched?.dataUrl || candidate,
+      dataUrl: compact,
       pageTitle: meta?.pageTitle || "",
       pageUrl: meta?.pageUrl || "",
       alt: meta?.alt || "",
@@ -782,6 +795,51 @@ function safeName(s) {
     .replace(/[\\/:*?"<>|]+/g, "_")
     .replace(/\s+/g, " ")
     .trim() || "untitled";
+}
+
+async function downscaleDataUrl(dataUrl, maxEdge = 1600, quality = 0.82) {
+  if (!dataUrl || !dataUrl.startsWith("data:image/")) return dataUrl;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = async () => {
+      try {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        if (!w || !h) return resolve(dataUrl);
+        const scale = Math.min(1, maxEdge / Math.max(w, h));
+        const tw = Math.max(1, Math.round(w * scale));
+        const th = Math.max(1, Math.round(h * scale));
+        // Skip work if it's already small.
+        if (scale === 1 && dataUrl.length < 400_000) return resolve(dataUrl);
+        const canvas =
+          typeof OffscreenCanvas !== "undefined"
+            ? new OffscreenCanvas(tw, th)
+            : Object.assign(document.createElement("canvas"), {
+                width: tw,
+                height: th,
+              });
+        canvas.getContext("2d").drawImage(img, 0, 0, tw, th);
+        const blob = canvas.convertToBlob
+          ? await canvas.convertToBlob({ type: "image/jpeg", quality })
+          : await new Promise((r) =>
+              canvas.toBlob(r, "image/jpeg", quality)
+            );
+        if (!blob) return resolve(dataUrl);
+        // Don't replace the original if compression made it bigger.
+        if (blob.size >= Math.max(120_000, dataUrl.length * 0.7)) {
+          return resolve(dataUrl);
+        }
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => resolve(dataUrl);
+        reader.readAsDataURL(blob);
+      } catch (_) {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
 }
 
 async function reencodeAsPng(dataUrl) {
@@ -1216,13 +1274,16 @@ $("#multiTagSave").addEventListener("click", async () => {
     alert("Pick at least one tag, or Cancel.");
     return;
   }
+  const compactDataUrl = await downscaleDataUrl(
+    pendingPhoto.dataUrl || pendingPhoto.url
+  );
   for (const catId of checked) {
     const cat = getBucket().categories.find((c) => c.id === catId);
     if (!cat) continue;
     cat.photos.push({
       id: uid(),
       url: pendingPhoto.url,
-      dataUrl: pendingPhoto.dataUrl || pendingPhoto.url,
+      dataUrl: compactDataUrl,
       pageUrl: pendingPhoto.pageUrl || "",
       pageTitle: pendingPhoto.pageTitle || "",
       alt: pendingPhoto.alt || "",
@@ -1329,6 +1390,7 @@ async function togglePillForItem(item, cat, btn) {
       const fetched = await fetchAsDataUrl(item.url);
       dataUrl = fetched?.dataUrl || item.dataUrl || item.url;
     }
+    dataUrl = await downscaleDataUrl(dataUrl);
     cat.photos.push({
       id: uid(),
       url: item.url,
@@ -1879,6 +1941,7 @@ async function callClaudeForTags(item) {
 async function applySuggestions(item, suggestions, dataUrl) {
   const cats = getBucket().categories;
   const id = photoIdentity(item);
+  const compactDataUrl = await downscaleDataUrl(dataUrl);
   let added = 0;
   for (const tag of suggestions) {
     const cat = cats.find(
@@ -1889,7 +1952,7 @@ async function applySuggestions(item, suggestions, dataUrl) {
     cat.photos.push({
       id: uid(),
       url: item.url,
-      dataUrl,
+      dataUrl: compactDataUrl,
       pageUrl: item.pageUrl || "",
       pageTitle: item.pageTitle || item.section || "",
       alt: item.alt || "",
