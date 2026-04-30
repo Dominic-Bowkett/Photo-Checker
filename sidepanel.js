@@ -1816,21 +1816,33 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
     return;
   }
   if (!detected.length) return;
-  if (
-    !confirm(
-      `Auto‑tag all ${detected.length} detected photo${
-        detected.length === 1 ? "" : "s"
-      }? Each one is sent to Claude in turn.`
-    )
-  ) {
+
+  const existing = existingPhotoUrls();
+  const items = detected.filter(
+    (p) => !p.url || !existing.has(p.url)
+  );
+
+  if (!items.length) {
+    alert(
+      "No new photos to tag — every detected photo is already filed in a tag."
+    );
     return;
   }
+
+  const skippedAlready = detected.length - items.length;
+  const promptText = skippedAlready
+    ? `Auto‑tag ${items.length} new photo${
+        items.length === 1 ? "" : "s"
+      }? (${skippedAlready} already filed will be skipped.)`
+    : `Auto‑tag ${items.length} new photo${
+        items.length === 1 ? "" : "s"
+      }?`;
+  if (!confirm(promptText)) return;
 
   const wasLabel = detectedAutoTagBtn.textContent;
   detectedAutoTagBtn.disabled = true;
   let totalAdded = 0;
   let failures = 0;
-  const items = detected.slice();
   for (let i = 0; i < items.length; i++) {
     detectedAutoTagBtn.textContent = `Tagging ${i + 1}/${items.length}…`;
     try {
@@ -1849,14 +1861,15 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
     renderLightboxPills(lightboxItems[lightboxIndex]);
   }
   // Refresh the detected list so NEW/tagged states reflect the new memberships.
-  if (detected.length) showDetected(items);
+  if (detected.length) showDetected(detected);
   detectedAutoTagBtn.disabled = false;
   detectedAutoTagBtn.textContent = wasLabel;
   alert(
-    `Auto‑tag complete. Added ${totalAdded} tag${totalAdded === 1 ? "" : "s"} across ${
-      items.length - failures
-    } photo${items.length - failures === 1 ? "" : "s"}` +
-      (failures ? `, ${failures} failed.` : ".")
+    `Auto‑tag complete. Added ${totalAdded} tag${
+      totalAdded === 1 ? "" : "s"
+    } across ${items.length - failures} new photo${
+      items.length - failures === 1 ? "" : "s"
+    }` + (failures ? `, ${failures} failed.` : ".")
   );
 });
 
