@@ -194,6 +194,17 @@ main {
   background: #eef0f3;
   color: var(--black);
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+
+.category-header:hover {
+  background: #e4e7ec;
+}
+
+.category-header:focus-visible {
+  outline: 2px solid var(--yellow);
+  outline-offset: -2px;
 }
 
 .category-header .toggle {
@@ -211,7 +222,7 @@ main {
 }
 
 .category-header .title {
-  flex: 1;
+  flex: 0 1 auto;
   font-size: 13px;
   font-weight: 600;
   margin: 0;
@@ -220,6 +231,18 @@ main {
   padding: 2px 4px;
   color: var(--black);
   min-width: 0;
+  cursor: text;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-header .count {
+  flex: 0 0 auto;
+}
+
+.category-header .status-actions {
+  margin-left: auto;
 }
 
 .category-header .title:focus {
@@ -689,6 +712,42 @@ main {
   font-weight: 600;
 }
 
+.settings-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.settings-body label {
+  font-weight: 600;
+  color: var(--charcoal);
+  margin-top: 6px;
+}
+
+.settings-body input,
+.settings-body select {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.settings-body input:focus,
+.settings-body select:focus {
+  outline: 2px solid var(--yellow);
+  outline-offset: -1px;
+}
+
+.settings-hint {
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
 .summary-body {
   padding: 12px 14px;
   overflow-y: auto;
@@ -856,4 +915,20 @@ main {
   border-color: var(--yellow);
   color: var(--black);
   font-weight: 700;
+}
+
+#lightboxTags .tag-pill.auto-tag {
+  background: #1f2937;
+  border-color: var(--yellow);
+  color: var(--yellow);
+  font-weight: 700;
+}
+
+#lightboxTags .tag-pill.auto-tag:hover {
+  background: #111827;
+}
+
+#lightboxTags .tag-pill.auto-tag[disabled] {
+  opacity: 0.6;
+  cursor: progress;
 }

@@ -13,6 +13,7 @@
         <button id="scanTab" title="Find photos on the active assessment page">Scan</button>
         <button id="summaryBtn" title="Summary of completed and outstanding evidence">Summary</button>
         <button id="exportAll" title="Download all photos as a zip">Export</button>
+        <button id="settingsBtn" title="Settings (Claude API key)">⚙</button>
         <button id="clearAll" class="danger" title="Remove all photos in the current assessment">Clear</button>
       </div>
     </header>
@@ -86,10 +87,10 @@
 
     <template id="categoryTemplate">
       <section class="category" data-id="">
-        <header class="category-header">
+        <header class="category-header" role="button" tabindex="0">
           <button class="toggle" aria-label="Collapse">▸</button>
           <h2 class="title" contenteditable="true" spellcheck="false"></h2>
-          <span class="count">0</span>
+          <span class="count" hidden>0</span>
           <div class="status-actions">
             <button class="status-btn done" title="Mark evidence complete" aria-pressed="false">✓</button>
             <button class="status-btn na" title="Not applicable" aria-pressed="false">N/A</button>
@@ -115,6 +116,40 @@
         </div>
       </li>
     </template>
+
+    <div id="settingsModal" class="modal" hidden>
+      <div class="modal-card">
+        <header>
+          <h2>Settings</h2>
+          <button id="settingsClose" title="Close">×</button>
+        </header>
+        <div class="settings-body">
+          <label for="claudeApiKey">Claude API key</label>
+          <input
+            id="claudeApiKey"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="sk-ant-..."
+          />
+          <p class="settings-hint">
+            Used by the ✨ Auto‑tag button in the lightbox to ask Claude to
+            categorise a photo. Saved locally in this browser only — never
+            uploaded.
+          </p>
+          <label for="claudeModel">Model</label>
+          <select id="claudeModel">
+            <option value="claude-sonnet-4-6">claude-sonnet-4-6 (recommended)</option>
+            <option value="claude-opus-4-7">claude-opus-4-7 (more accurate, slower)</option>
+            <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (cheapest)</option>
+          </select>
+        </div>
+        <footer>
+          <button id="settingsCancel">Cancel</button>
+          <button id="settingsSave" class="primary">Save</button>
+        </footer>
+      </div>
+    </div>
 
     <div id="summaryModal" class="modal" hidden>
       <div class="modal-card">

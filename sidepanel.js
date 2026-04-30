@@ -406,11 +406,14 @@ function renderCategory(cat) {
   node.dataset.id = cat.id;
   const title = $(".title", node);
   title.textContent = cat.title;
-  $(".count", node).textContent = String(cat.photos.length);
+  const countEl = $(".count", node);
+  countEl.textContent = String(cat.photos.length);
+  countEl.hidden = cat.photos.length === 0;
   const body = $(".category-body", node);
   const dropzone = $(".dropzone", node);
   const photosEl = $(".photos", node);
   const toggle = $(".toggle", node);
+  const header = $(".category-header", node);
   const guidance = $(".guidance", node);
 
   guidance.textContent = cat.guidance || "";
@@ -419,6 +422,7 @@ function renderCategory(cat) {
   const setCollapsed = (collapsed) => {
     body.classList.toggle("collapsed", collapsed);
     toggle.textContent = collapsed ? "▸" : "▾";
+    header.setAttribute("aria-expanded", collapsed ? "false" : "true");
   };
   setCollapsed(cat.collapsed);
 
@@ -434,11 +438,33 @@ function renderCategory(cat) {
       title.blur();
     }
   });
+  title.addEventListener("click", (e) => e.stopPropagation());
 
-  toggle.addEventListener("click", async () => {
+  const toggleCollapsed = async () => {
     cat.collapsed = !cat.collapsed;
     setCollapsed(cat.collapsed);
     await save();
+  };
+
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleCollapsed();
+  });
+  header.addEventListener("click", (e) => {
+    if (
+      e.target.closest(".status-btn") ||
+      e.target.closest(".title") ||
+      e.target.closest(".toggle")
+    ) {
+      return;
+    }
+    toggleCollapsed();
+  });
+  header.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target === header) {
+      e.preventDefault();
+      toggleCollapsed();
+    }
   });
 
   // Status (Done / N/A) toggles, visible even when collapsed.
@@ -527,7 +553,9 @@ function attachDropHandlers(dropzone, cat, photosEl, categoryNode) {
       $(".toggle", categoryNode).textContent = "▾";
     }
     await save();
-    $(".count", categoryNode).textContent = String(cat.photos.length);
+    const cEl = $(".count", categoryNode);
+    cEl.textContent = String(cat.photos.length);
+    cEl.hidden = cat.photos.length === 0;
     for (const item of items) {
       photosEl.appendChild(renderPhoto(cat, item));
     }
@@ -984,7 +1012,7 @@ function showDetected(photos) {
     });
     li.addEventListener("click", () => {
       const idx = detected.findIndex((x) => x === p);
-      openLightbox(detected, idx >= 0 ? idx : 0, { taggable: true });
+      openLightbox(detected, idx >= 0 ? idx : 0);
     });
     detectedListEl.appendChild(li);
   }
@@ -1106,16 +1134,28 @@ const lightboxCaption = $("#lightboxCaption");
 const lightboxTagsEl = $("#lightboxTags");
 let lightboxItems = [];
 let lightboxIndex = 0;
-let lightboxTaggable = false;
 
-// Map<detectedId, Map<categoryId, photoIdInCategory>>
-const detectedTagAssignments = new Map();
+function photoIdentity(p) {
+  // A photo is "the same" across categories if its origin URL matches.
+  // Detected items often share their URL even before they're filed.
+  return (p && (p.url || p.dataUrl)) || "";
+}
 
-function openLightbox(items, index, opts = {}) {
+function categoriesContaining(item) {
+  const id = photoIdentity(item);
+  if (!id) return new Map();
+  const out = new Map();
+  for (const cat of getBucket().categories) {
+    const photo = cat.photos.find((p) => photoIdentity(p) === id);
+    if (photo) out.set(cat.id, photo.id);
+  }
+  return out;
+}
+
+function openLightbox(items, index) {
   if (!items?.length) return;
-  lightboxItems = items;
-  lightboxIndex = Math.max(0, Math.min(index || 0, items.length - 1));
-  lightboxTaggable = !!opts.taggable;
+  lightboxItems = items.slice();
+  lightboxIndex = Math.max(0, Math.min(index || 0, lightboxItems.length - 1));
   lightboxEl.hidden = false;
   showLightbox();
 }
@@ -1136,19 +1176,13 @@ function showLightbox() {
     lightboxItems.length > 1 ? "visible" : "hidden";
   $("#lightboxNext").style.visibility =
     lightboxItems.length > 1 ? "visible" : "hidden";
-  if (lightboxTaggable && item.detectedId) {
-    renderLightboxPills(item);
-    lightboxTagsEl.hidden = false;
-  } else {
-    lightboxTagsEl.hidden = true;
-    lightboxTagsEl.innerHTML = "";
-  }
+  renderLightboxPills(item);
+  lightboxTagsEl.hidden = false;
 }
 
 function renderLightboxPills(item) {
   lightboxTagsEl.innerHTML = "";
-  const assigned =
-    detectedTagAssignments.get(item.detectedId) || new Map();
+  const assigned = categoriesContaining(item);
   for (const cat of getBucket().categories) {
     const btn = document.createElement("button");
     btn.type = "button";
@@ -1161,18 +1195,24 @@ function renderLightboxPills(item) {
     });
     lightboxTagsEl.appendChild(btn);
   }
+  if (settings?.claudeApiKey) {
+    const ai = document.createElement("button");
+    ai.type = "button";
+    ai.className = "tag-pill auto-tag";
+    ai.textContent = "✨ Auto‑tag";
+    ai.addEventListener("click", (e) => {
+      e.stopPropagation();
+      autoTagItem(item, ai);
+    });
+    lightboxTagsEl.appendChild(ai);
+  }
 }
 
 async function togglePillForItem(item, cat, btn) {
-  let assigned = detectedTagAssignments.get(item.detectedId);
-  if (!assigned) {
-    assigned = new Map();
-    detectedTagAssignments.set(item.detectedId, assigned);
-  }
-  if (assigned.has(cat.id)) {
-    const photoId = assigned.get(cat.id);
-    cat.photos = cat.photos.filter((p) => p.id !== photoId);
-    assigned.delete(cat.id);
+  const id = photoIdentity(item);
+  const existingIdx = cat.photos.findIndex((p) => photoIdentity(p) === id);
+  if (existingIdx >= 0) {
+    cat.photos.splice(existingIdx, 1);
     btn.classList.remove("active");
   } else {
     let dataUrl = item.dataUrl;
@@ -1180,7 +1220,7 @@ async function togglePillForItem(item, cat, btn) {
       const fetched = await fetchAsDataUrl(item.url);
       dataUrl = fetched?.dataUrl || item.dataUrl || item.url;
     }
-    const photo = {
+    cat.photos.push({
       id: uid(),
       url: item.url,
       dataUrl,
@@ -1188,9 +1228,7 @@ async function togglePillForItem(item, cat, btn) {
       pageTitle: item.pageTitle || item.section || "",
       alt: item.alt || "",
       addedAt: Date.now(),
-    };
-    cat.photos.push(photo);
-    assigned.set(cat.id, photo.id);
+    });
     btn.classList.add("active");
   }
   await save();
@@ -1201,7 +1239,6 @@ function closeLightbox() {
   lightboxEl.hidden = true;
   lightboxImg.removeAttribute("src");
   lightboxItems = [];
-  lightboxTaggable = false;
 }
 
 function stepLightbox(delta) {
@@ -1603,4 +1640,152 @@ document
     render();
   });
 
-load();
+// ---- Settings (Claude API key) ------------------------------------------
+const SETTINGS_KEY = "epcSettings";
+let settings = { claudeApiKey: "", claudeModel: "claude-sonnet-4-6" };
+
+async function loadSettings() {
+  const stored = await chrome.storage.local.get(SETTINGS_KEY);
+  if (stored[SETTINGS_KEY]) {
+    settings = { ...settings, ...stored[SETTINGS_KEY] };
+  }
+}
+
+async function saveSettings() {
+  await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+}
+
+const settingsModal = $("#settingsModal");
+const settingsKeyInput = $("#claudeApiKey");
+const settingsModelInput = $("#claudeModel");
+
+$("#settingsBtn").addEventListener("click", () => {
+  settingsKeyInput.value = settings.claudeApiKey || "";
+  settingsModelInput.value = settings.claudeModel || "claude-sonnet-4-6";
+  settingsModal.hidden = false;
+  setTimeout(() => settingsKeyInput.focus(), 0);
+});
+$("#settingsClose").addEventListener("click", () => (settingsModal.hidden = true));
+$("#settingsCancel").addEventListener("click", () => (settingsModal.hidden = true));
+$("#settingsSave").addEventListener("click", async () => {
+  settings.claudeApiKey = settingsKeyInput.value.trim();
+  settings.claudeModel = settingsModelInput.value || "claude-sonnet-4-6";
+  await saveSettings();
+  settingsModal.hidden = true;
+  // If the lightbox is open, refresh pills so the auto-tag button appears.
+  if (!lightboxEl.hidden) renderLightboxPills(lightboxItems[lightboxIndex]);
+});
+
+// ---- Claude vision auto-tagging ----------------------------------------
+async function autoTagItem(item, btn) {
+  if (!settings.claudeApiKey) {
+    alert("Set your Claude API key in Settings first (gear icon).");
+    return;
+  }
+
+  // Make sure we have base64 data we can send.
+  let dataUrl = item.dataUrl;
+  if (!dataUrl || dataUrl === item.url) {
+    const fetched = await fetchAsDataUrl(item.url);
+    dataUrl = fetched?.dataUrl || item.dataUrl;
+  }
+  const m = dataUrl && dataUrl.match(/^data:(image\/[^;]+);base64,(.*)$/);
+  if (!m) {
+    alert("Could not load image data for AI analysis.");
+    return;
+  }
+  let mediaType = m[1];
+  // Anthropic accepts jpeg/png/gif/webp; coerce jpg -> jpeg.
+  if (mediaType === "image/jpg") mediaType = "image/jpeg";
+  const base64 = m[2];
+
+  const cats = getBucket().categories;
+  const tagList = cats.map((c) => c.title);
+
+  const wasLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Analysing…";
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": settings.claudeApiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: settings.claudeModel || "claude-sonnet-4-6",
+        max_tokens: 300,
+        system:
+          "You are an EPC photo evidence categoriser for UK SAP/RdSAP assessments. " +
+          "Available categories: " +
+          tagList.map((t) => `"${t}"`).join(", ") +
+          ". Examine the image and respond with a JSON array of category names " +
+          "from the list that clearly apply (one or more). Use exact names. " +
+          "If nothing applies, return [].",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: mediaType, data: base64 },
+              },
+              {
+                type: "text",
+                text: "Which of the listed EPC categories apply to this photo? Respond only with the JSON array.",
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${errText.slice(0, 300)}`);
+    }
+    const data = await resp.json();
+    const text = data?.content?.[0]?.text || "";
+    const arrMatch = text.match(/\[[\s\S]*?\]/);
+    if (!arrMatch) throw new Error(`Could not parse response: ${text.slice(0, 200)}`);
+    const suggestions = JSON.parse(arrMatch[0]);
+    if (!Array.isArray(suggestions)) throw new Error("Response was not a JSON array");
+
+    let added = 0;
+    const id = photoIdentity(item);
+    for (const tag of suggestions) {
+      const cat = cats.find(
+        (c) => c.title.toLowerCase() === String(tag).toLowerCase()
+      );
+      if (!cat) continue;
+      if (cat.photos.some((p) => photoIdentity(p) === id)) continue;
+      cat.photos.push({
+        id: uid(),
+        url: item.url,
+        dataUrl,
+        pageUrl: item.pageUrl || "",
+        pageTitle: item.pageTitle || item.section || "",
+        alt: item.alt || "",
+        addedAt: Date.now(),
+      });
+      added++;
+    }
+    await save();
+    render();
+    renderLightboxPills(item);
+    btn.textContent = added
+      ? `✨ +${added} tag${added === 1 ? "" : "s"}`
+      : "✨ No new tags";
+    setTimeout(() => (btn.textContent = wasLabel), 1800);
+  } catch (err) {
+    console.error("Auto-tag failed", err);
+    alert("Auto-tag failed: " + (err?.message || err));
+    btn.textContent = wasLabel;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+loadSettings().then(load);
