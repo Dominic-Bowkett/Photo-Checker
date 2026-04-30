@@ -18,10 +18,11 @@
     </header>
 
     <p class="hint">
-      Drag any image from the active tab into a category below. Use
-      <strong>Scan tab</strong> on an
-      <code>energytrust.assessapp.com</code> assessment page to pull photos from
-      Question 1 automatically.
+      Right‑click any image on a webpage and choose
+      <strong>Add to EPC photo evidence</strong> to file it under a tag (or
+      pick <em>Choose multiple tags…</em> for cross‑tagging). You can also
+      drag images directly into a tag below or use <strong>Scan tab</strong>
+      on an <code>energytrust.assessapp.com</code> page.
     </p>
 
     <section id="detected" hidden>
@@ -41,14 +42,17 @@
     <template id="categoryTemplate">
       <section class="category" data-id="">
         <header class="category-header">
-          <button class="toggle" aria-label="Collapse">▾</button>
+          <button class="toggle" aria-label="Collapse">▸</button>
           <h2 class="title" contenteditable="true" spellcheck="false"></h2>
           <span class="count">0</span>
           <button class="remove" title="Remove category">×</button>
         </header>
-        <div class="dropzone" tabindex="0">
-          <p class="dropzone-hint">Drop photos here</p>
-          <ul class="photos"></ul>
+        <div class="category-body">
+          <p class="guidance"></p>
+          <div class="dropzone" tabindex="0">
+            <p class="dropzone-hint">Drop photos here</p>
+            <ul class="photos"></ul>
+          </div>
         </div>
       </section>
     </template>
@@ -63,6 +67,21 @@
         </div>
       </li>
     </template>
+
+    <div id="multiTagModal" class="modal" hidden>
+      <div class="modal-card">
+        <header>
+          <h2>Tag this photo</h2>
+          <button id="multiTagClose" title="Cancel">×</button>
+        </header>
+        <img id="multiTagPreview" alt="" />
+        <div id="multiTagOptions"></div>
+        <footer>
+          <button id="multiTagCancel">Cancel</button>
+          <button id="multiTagSave" class="primary">Save</button>
+        </footer>
+      </div>
+    </div>
 
     <script src="sidepanel.js" type="module"></script>
   </body>

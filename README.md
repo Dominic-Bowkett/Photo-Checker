@@ -16,13 +16,25 @@ Requires Chrome 114+ for the `chrome.sidePanel` API.
 
 ## Use
 
-- The side panel ships with the standard EPC evidence headings. Click a heading
-  to rename it, use **+ Category** to add new ones, or **×** to remove one.
-- Drag any image from the active tab into a category drop zone.
+- The side panel ships with the standard EPC evidence tags, each with the
+  RdSAP guidance shown when the tag is expanded. Click a heading to rename
+  it, use **+ Category** to add custom tags, or **×** to remove one.
+- **Right‑click any image** on a webpage → **Add to EPC photo evidence** and
+  pick a tag. Choose **Choose multiple tags…** to apply several at once
+  (the side panel opens with a checkbox picker).
+- You can also drag images directly into a tag drop zone.
 - Hover a thumbnail to download or remove it.
 - **Export** triggers a download for every photo, filed under
-  `EPC/<category>/<id>.<ext>` in your Downloads folder.
+  `EPC/<tag>/<id>.<ext>` in your Downloads folder.
 - All state is kept in `chrome.storage.local` so it survives across sessions.
+
+## Default tags
+
+External Elevations · Wall Construction · Roof Construction · Loft Space
+Access · Loft Insulation · Roof Rooms · Openings · Primary Heating System ·
+Heating System Controls · Hot Water Cylinder · Hot Water Cylinder Thermostat ·
+Electricity Meter · Heating Fuel · Conservatory · Light Fittings · Renewables ·
+Additional Evidence
 
 ### Auto-scan an assessment record
 
@@ -40,33 +52,18 @@ From the **Detected on page** strip you can:
   detected photo at once, or
 - double‑click a thumbnail to send just that one to the selected category.
 
-## Default categories
-
-- Property exterior – front
-- Property exterior – rear / sides
-- Main heating (boiler / heat source)
-- Heating controls (programmer & thermostat)
-- Hot water cylinder
-- Loft / roof insulation
-- Walls – construction & insulation
-- Floor construction
-- Windows (sample)
-- Lighting (low energy count)
-- Extensions
-- Renewables (PV / solar thermal / heat pump)
-- Meter readings & fuel type
-- Ventilation
-- Other / notes
-
 ## Files
 
-- `manifest.json` – MV3 manifest, registers the side panel and content script.
-- `background.js` – service worker; opens the side panel on action click and
-  proxies cross-origin image fetches to a data URL.
-- `content.js` – ensures dragged `<img>` elements expose their URL on
-  `dataTransfer` (helps with sites that block default image dragging).
-- `sidepanel.html` / `sidepanel.css` / `sidepanel.js` – the panel UI, drop
-  handling, persistence, and export.
+- `manifest.json` – MV3 manifest, registers the side panel, content script
+  and context menu.
+- `background.js` – service worker; opens the side panel on action click,
+  builds the right‑click "Add to EPC photo evidence" submenu, fetches
+  images as data URLs, and writes directly to `chrome.storage.local`.
+- `content.js` – exposes dragged `<img>` URLs on `dataTransfer` and
+  responds to the side panel's `findEpcPhotos` message used by Scan tab.
+- `sidepanel.html` / `sidepanel.css` / `sidepanel.js` – the panel UI,
+  guidance display, drop handling, multi‑tag modal, persistence, and
+  export.
 
 ## Notes
 

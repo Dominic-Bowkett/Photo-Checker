@@ -1,27 +1,98 @@
 const STORAGE_KEY = "epcPhotoState";
+const STORAGE_VERSION = 2;
+const PENDING_KEY = "epcPendingMultiTag";
 
 const DEFAULT_CATEGORIES = [
-  "Property exterior – front",
-  "Property exterior – rear / sides",
-  "Main heating (boiler / heat source)",
-  "Heating controls (programmer & thermostat)",
-  "Hot water cylinder",
-  "Loft / roof insulation",
-  "Walls – construction & insulation",
-  "Floor construction",
-  "Windows (sample)",
-  "Lighting (low energy count)",
-  "Extensions",
-  "Renewables (PV / solar thermal / heat pump)",
-  "Meter readings & fuel type",
-  "Ventilation",
-  "Other / notes",
+  {
+    title: "External Elevations",
+    guidance:
+      "All elevations appropriate to the detachment of the property. Elevation photos must be comprehensive enough to show the dwelling being assessed from its highest to lowest extent (a photo with the front door open is a good idea as it serves to prove that you had access to the property on the day of the assessment, just in case there are queries later).",
+  },
+  {
+    title: "Wall Construction",
+    guidance:
+      "Evidence of build type, wall thickness measurements, retro-fitted insulation (such as cavity fill drill holes or boroscope investigations).",
+  },
+  {
+    title: "Roof Construction",
+    guidance:
+      "Selections of all roof constructions selected for the building.",
+  },
+  {
+    title: "Loft Space Access",
+    guidance:
+      "Evidence of access to the loft space or lack of access (as much as is possible).",
+  },
+  {
+    title: "Loft Insulation",
+    guidance:
+      "Loft insulation which gives evidence of the depth of insulation and the overall insulation coverage within the loft. Where different areas of the building have assessable loft insulation, the evidence must indicate which area of the building each photograph relates to.",
+  },
+  {
+    title: "Roof Rooms",
+    guidance:
+      "Evidence that supports the selection of a roof room including fixed access such that one can walk down facing forwards.",
+  },
+  {
+    title: "Openings",
+    guidance: "Windows, doors, draught proofing, chimneys, etc.",
+  },
+  {
+    title: "Primary Heating System",
+    guidance:
+      "Primary heating system(s) (e.g. boiler showing any associated key features such as a condensate pipe or label indicating the boiler model if using PCDF). Include any secondary heating system here as well.",
+  },
+  {
+    title: "Heating System Controls",
+    guidance:
+      "All relevant thermostatic and/or timed controls appropriate to the primary heating system(s).",
+  },
+  {
+    title: "Hot Water Cylinder",
+    guidance: "Including evidence of insulation type and depth.",
+  },
+  {
+    title: "Hot Water Cylinder Thermostat",
+    guidance:
+      "We must have a picture where possible. If a cylinder stat is assumed this should be documented in your site notes.",
+  },
+  {
+    title: "Electricity Meter",
+    guidance:
+      "Indicating dual or single tariff. If no access then site notes are vital to indicate the selection of electricity tariff. Only use 'unknown' if there is no access to the meter, no documentary evidence such as a utility bill AND there are no fixed dual electricity appliances in the dwelling. If there is a dual or twin HWC and/or fixed storage heaters it is advised to enter 'unknown' if you cannot access or locate the meter, and allow the software to default.",
+  },
+  {
+    title: "Heating Fuel",
+    guidance:
+      "Evidence of fuel type selected for primary and secondary heating systems e.g. LPG cylinder, LPG tank, oil tank, mains gas meter, solid fuel store, utility bill.",
+  },
+  {
+    title: "Conservatory",
+    guidance:
+      "Photographic evidence supporting the selection of a conservatory i.e. glazing coverage of room and exposed perimeter and its inclusion in the assessment i.e. whether it is separated or not.",
+  },
+  {
+    title: "Light Fittings",
+    guidance:
+      "Evidence of low energy lamps within the building if they are included in the assessment (an example or selection is acceptable, you do not need to photograph every light fitting).",
+  },
+  {
+    title: "Renewables",
+    guidance:
+      "Evidence to support the selection of renewable or low-carbon technologies – solar, PV, WWHRS, FGHRS, wind turbines, etc.",
+  },
+  {
+    title: "Additional Evidence",
+    guidance:
+      "Any other key feature of the building or limitation whose presence or absence may be reasonably considered likely to affect the SAP rating, or which would be required to support any claim made in the report that could be subsequently queried or be the subject of a complaint.",
+  },
 ];
 
 const uid = () =>
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 const state = {
+  version: STORAGE_VERSION,
   categories: [],
 };
 
@@ -30,25 +101,61 @@ const categoriesEl = $("#categories");
 const categoryTpl = $("#categoryTemplate");
 const photoTpl = $("#photoTemplate");
 
+let suppressNextStorageEvent = false;
+
 async function load() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
-  if (stored[STORAGE_KEY]?.categories?.length) {
-    state.categories = stored[STORAGE_KEY].categories;
+  const existing = stored[STORAGE_KEY];
+  if (
+    existing?.version === STORAGE_VERSION &&
+    Array.isArray(existing.categories) &&
+    existing.categories.length
+  ) {
+    state.categories = existing.categories.map((c) => ({
+      ...c,
+      guidance:
+        c.guidance ??
+        DEFAULT_CATEGORIES.find((d) => d.title === c.title)?.guidance ??
+        "",
+    }));
+    state.version = existing.version;
   } else {
-    state.categories = DEFAULT_CATEGORIES.map((title) => ({
+    state.categories = DEFAULT_CATEGORIES.map((c) => ({
       id: uid(),
-      title,
-      collapsed: false,
+      title: c.title,
+      guidance: c.guidance,
+      collapsed: true,
       photos: [],
     }));
+    state.version = STORAGE_VERSION;
     await save();
   }
   render();
+  await checkPendingMultiTag();
 }
 
 async function save() {
+  suppressNextStorageEvent = true;
   await chrome.storage.local.set({ [STORAGE_KEY]: state });
 }
+
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area !== "local") return;
+  if (changes[STORAGE_KEY]) {
+    if (suppressNextStorageEvent) {
+      suppressNextStorageEvent = false;
+    } else {
+      const next = changes[STORAGE_KEY].newValue;
+      if (next?.version === STORAGE_VERSION) {
+        state.categories = next.categories || [];
+        render();
+      }
+    }
+  }
+  if (changes[PENDING_KEY]?.newValue) {
+    checkPendingMultiTag();
+  }
+});
 
 function render() {
   categoriesEl.innerHTML = "";
@@ -63,14 +170,20 @@ function renderCategory(cat) {
   const title = $(".title", node);
   title.textContent = cat.title;
   $(".count", node).textContent = String(cat.photos.length);
+  const body = $(".category-body", node);
   const dropzone = $(".dropzone", node);
   const photosEl = $(".photos", node);
   const toggle = $(".toggle", node);
+  const guidance = $(".guidance", node);
 
-  if (cat.collapsed) {
-    dropzone.classList.add("collapsed");
-    toggle.textContent = "▸";
-  }
+  guidance.textContent = cat.guidance || "";
+  if (!cat.guidance) guidance.style.display = "none";
+
+  const setCollapsed = (collapsed) => {
+    body.classList.toggle("collapsed", collapsed);
+    toggle.textContent = collapsed ? "▸" : "▾";
+  };
+  setCollapsed(cat.collapsed);
 
   title.addEventListener("blur", async () => {
     const next = title.textContent.trim() || "Untitled";
@@ -87,13 +200,12 @@ function renderCategory(cat) {
 
   toggle.addEventListener("click", async () => {
     cat.collapsed = !cat.collapsed;
-    dropzone.classList.toggle("collapsed", cat.collapsed);
-    toggle.textContent = cat.collapsed ? "▸" : "▾";
+    setCollapsed(cat.collapsed);
     await save();
   });
 
   $(".remove", node).addEventListener("click", async () => {
-    if (!confirm(`Remove category "${cat.title}" and all its photos?`)) return;
+    if (!confirm(`Remove tag "${cat.title}" and all its photos?`)) return;
     state.categories = state.categories.filter((c) => c.id !== cat.id);
     await save();
     render();
@@ -142,8 +254,11 @@ function attachDropHandlers(dropzone, cat, photosEl, categoryNode) {
     dropzone.classList.remove("dragover");
     const items = await extractDroppedImages(e.dataTransfer);
     if (!items.length) return;
-    for (const item of items) {
-      cat.photos.push(item);
+    for (const item of items) cat.photos.push(item);
+    if (cat.collapsed) {
+      cat.collapsed = false;
+      $(".category-body", categoryNode).classList.remove("collapsed");
+      $(".toggle", categoryNode).textContent = "▾";
     }
     await save();
     $(".count", categoryNode).textContent = String(cat.photos.length);
@@ -256,11 +371,12 @@ function guessExt(url) {
 }
 
 $("#addCategory").addEventListener("click", async () => {
-  const title = prompt("New category name:");
+  const title = prompt("New tag name:");
   if (!title) return;
   state.categories.push({
     id: uid(),
     title: title.trim(),
+    guidance: "",
     collapsed: false,
     photos: [],
   });
@@ -269,7 +385,7 @@ $("#addCategory").addEventListener("click", async () => {
 });
 
 $("#clearAll").addEventListener("click", async () => {
-  if (!confirm("Remove ALL photos from every category?")) return;
+  if (!confirm("Remove ALL photos from every tag?")) return;
   for (const c of state.categories) c.photos = [];
   await save();
   render();
@@ -317,10 +433,7 @@ function showDetected(photos) {
       e.dataTransfer.effectAllowed = "copy";
       e.dataTransfer.setData("text/uri-list", p.url);
       e.dataTransfer.setData("text/plain", p.url);
-      e.dataTransfer.setData(
-        "application/x-epc-photo",
-        JSON.stringify(p)
-      );
+      e.dataTransfer.setData("application/x-epc-photo", JSON.stringify(p));
     });
     li.addEventListener("dblclick", () => assignDetected([p]));
     detectedListEl.appendChild(li);
@@ -386,5 +499,72 @@ $("#detectedClose").addEventListener("click", () => {
   detectedEl.hidden = true;
   detected = [];
 });
+
+const multiTagModal = $("#multiTagModal");
+const multiTagOptions = $("#multiTagOptions");
+const multiTagPreview = $("#multiTagPreview");
+let pendingPhoto = null;
+
+async function checkPendingMultiTag() {
+  const stored = await chrome.storage.local.get(PENDING_KEY);
+  const pending = stored[PENDING_KEY];
+  if (!pending?.photo) return;
+  pendingPhoto = pending.photo;
+  openMultiTagModal(pending.photo);
+}
+
+function openMultiTagModal(photo) {
+  multiTagPreview.src = photo.dataUrl || photo.url;
+  multiTagOptions.innerHTML = "";
+  for (const cat of state.categories) {
+    const id = `mt-${cat.id}`;
+    const label = document.createElement("label");
+    label.htmlFor = id;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.id = id;
+    cb.value = cat.id;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(cat.title));
+    multiTagOptions.appendChild(label);
+  }
+  multiTagModal.hidden = false;
+}
+
+async function closeMultiTagModal(clearPending) {
+  multiTagModal.hidden = true;
+  pendingPhoto = null;
+  if (clearPending) await chrome.storage.local.remove(PENDING_KEY);
+}
+
+$("#multiTagSave").addEventListener("click", async () => {
+  if (!pendingPhoto) return closeMultiTagModal(true);
+  const checked = [...multiTagOptions.querySelectorAll("input:checked")].map(
+    (i) => i.value
+  );
+  if (!checked.length) {
+    alert("Pick at least one tag, or Cancel.");
+    return;
+  }
+  for (const catId of checked) {
+    const cat = state.categories.find((c) => c.id === catId);
+    if (!cat) continue;
+    cat.photos.push({
+      id: uid(),
+      url: pendingPhoto.url,
+      dataUrl: pendingPhoto.dataUrl || pendingPhoto.url,
+      pageUrl: pendingPhoto.pageUrl || "",
+      pageTitle: pendingPhoto.pageTitle || "",
+      alt: pendingPhoto.alt || "",
+      addedAt: Date.now(),
+    });
+  }
+  await save();
+  render();
+  closeMultiTagModal(true);
+});
+
+$("#multiTagCancel").addEventListener("click", () => closeMultiTagModal(true));
+$("#multiTagClose").addEventListener("click", () => closeMultiTagModal(true));
 
 load();
