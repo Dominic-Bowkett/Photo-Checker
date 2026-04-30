@@ -191,8 +191,8 @@ main {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  background: var(--charcoal);
-  color: #fff;
+  background: #eef0f3;
+  color: var(--black);
   border-bottom: 1px solid var(--border);
 }
 
@@ -202,11 +202,12 @@ main {
   padding: 0 4px;
   font-size: 14px;
   cursor: pointer;
-  color: #fff;
+  color: var(--charcoal);
 }
 
 .category-header .toggle:hover {
   background: transparent;
+  color: var(--black);
 }
 
 .category-header .title {
@@ -217,12 +218,12 @@ main {
   outline: none;
   border-radius: 3px;
   padding: 2px 4px;
-  color: #fff;
+  color: var(--black);
   min-width: 0;
 }
 
 .category-header .title:focus {
-  background: var(--charcoal-soft);
+  background: #fff7c2;
 }
 
 .category-header .count {
@@ -243,18 +244,18 @@ main {
   font-size: 11px;
   padding: 2px 6px;
   border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  background: transparent;
-  color: #fff;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--charcoal);
   line-height: 1.2;
   font-weight: 600;
   cursor: pointer;
 }
 
 .status-btn:hover {
-  background: rgba(255, 212, 0, 0.18);
+  background: #fff7c2;
   border-color: var(--yellow);
-  color: #fff;
+  color: var(--black);
 }
 
 .status-btn.active {
@@ -275,13 +276,13 @@ main {
   border: none;
   background: transparent;
   font-size: 16px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--muted);
   cursor: pointer;
   padding: 0 4px;
 }
 
 .category-header .remove:hover {
-  color: #fff;
+  color: var(--black);
   background: transparent;
 }
 
