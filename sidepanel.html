@@ -45,6 +45,20 @@
       </button>
     </div>
 
+    <section id="floorplanPinned" class="pinned" hidden>
+      <header>
+        <h2>Floorplan</h2>
+        <button id="floorplanExpand" title="Open large view" hidden>⤢</button>
+      </header>
+      <div class="pinned-body">
+        <img id="floorplanImg" alt="Floorplan" />
+        <p class="pinned-empty">
+          No floorplan filed yet. Right‑click the floorplan image and choose
+          <strong>Add to EPC photo evidence → Floorplan</strong>.
+        </p>
+      </div>
+    </section>
+
     <section id="detected" hidden>
       <header class="detected-header">
         <h2>Detected on page <span id="detectedCount">0</span></h2>
@@ -101,6 +115,14 @@
           <button id="multiTagSave" class="primary">Save</button>
         </footer>
       </div>
+    </div>
+
+    <div id="lightbox" class="lightbox" hidden>
+      <button id="lightboxClose" title="Close (Esc)" aria-label="Close">×</button>
+      <button id="lightboxPrev" title="Previous (←)" aria-label="Previous">‹</button>
+      <img id="lightboxImg" alt="" />
+      <button id="lightboxNext" title="Next (→)" aria-label="Next">›</button>
+      <div id="lightboxCaption"></div>
     </div>
 
     <script src="vendor/pdf.js"></script>

@@ -4,6 +4,11 @@ const PENDING_KEY = "epcPendingMultiTag";
 
 const DEFAULT_CATEGORIES = [
   {
+    title: "Floorplan",
+    guidance:
+      "Property floorplan or sketch showing room layout, dimensions and orientation. The most recent image filed here is pinned at the top of the side panel for quick reference while filing other evidence.",
+  },
+  {
     title: "External Elevations",
     guidance:
       "All elevations appropriate to the detachment of the property. Elevation photos must be comprehensive enough to show the dwelling being assessed from its highest to lowest extent (a photo with the front door open is a good idea as it serves to prove that you had access to the property on the day of the assessment, just in case there are queries later).",
@@ -119,6 +124,23 @@ async function load() {
         "",
     }));
     state.version = existing.version;
+    let mutated = false;
+    if (
+      !state.categories.some(
+        (c) => c.title.toLowerCase() === "floorplan"
+      )
+    ) {
+      const def = DEFAULT_CATEGORIES.find((d) => d.title === "Floorplan");
+      state.categories.unshift({
+        id: uid(),
+        title: "Floorplan",
+        guidance: def?.guidance || "",
+        collapsed: true,
+        photos: [],
+      });
+      mutated = true;
+    }
+    if (mutated) await save();
   } else {
     state.categories = DEFAULT_CATEGORIES.map((c) => ({
       id: uid(),
@@ -164,6 +186,37 @@ function render() {
   }
   rebuildTagFilter();
   applyFilters();
+  renderFloorplanPinned();
+}
+
+function findFloorplanCategory() {
+  return state.categories.find(
+    (c) => c.title.toLowerCase() === "floorplan"
+  );
+}
+
+function renderFloorplanPinned() {
+  const section = document.getElementById("floorplanPinned");
+  const img = document.getElementById("floorplanImg");
+  const empty = section.querySelector(".pinned-empty");
+  const expand = document.getElementById("floorplanExpand");
+  const cat = findFloorplanCategory();
+  section.hidden = false;
+  if (!cat || !cat.photos.length) {
+    img.hidden = true;
+    img.removeAttribute("src");
+    empty.hidden = false;
+    expand.hidden = true;
+    return;
+  }
+  const photo = cat.photos[cat.photos.length - 1];
+  img.hidden = false;
+  img.src = photo.dataUrl || photo.url;
+  img.alt = photo.alt || "Floorplan";
+  empty.hidden = true;
+  expand.hidden = false;
+  img.onclick = () => openLightbox(cat.photos, cat.photos.length - 1);
+  expand.onclick = () => openLightbox(cat.photos, cat.photos.length - 1);
 }
 
 function renderCategory(cat) {
@@ -228,6 +281,11 @@ function renderPhoto(cat, photo) {
   img.alt = photo.alt || "";
   $(".photo-source", node).textContent = photo.pageTitle || photo.url;
   $(".photo-source", node).title = photo.url;
+
+  img.addEventListener("click", () => {
+    const idx = cat.photos.findIndex((p) => p.id === photo.id);
+    openLightbox(cat.photos, idx >= 0 ? idx : 0);
+  });
 
   $(".photo-download", node).addEventListener("click", () =>
     downloadPhoto(cat, photo)
@@ -438,6 +496,11 @@ function showDetected(photos) {
       e.dataTransfer.setData("application/x-epc-photo", JSON.stringify(p));
     });
     li.addEventListener("dblclick", () => assignDetected([p]));
+    li.addEventListener("click", (e) => {
+      if (e.detail > 1) return; // ignore the click that's part of a dblclick
+      const idx = detected.findIndex((x) => x === p);
+      openLightbox(detected, idx >= 0 ? idx : 0);
+    });
     detectedListEl.appendChild(li);
   }
 }
@@ -568,6 +631,64 @@ $("#multiTagSave").addEventListener("click", async () => {
 
 $("#multiTagCancel").addEventListener("click", () => closeMultiTagModal(true));
 $("#multiTagClose").addEventListener("click", () => closeMultiTagModal(true));
+
+const lightboxEl = $("#lightbox");
+const lightboxImg = $("#lightboxImg");
+const lightboxCaption = $("#lightboxCaption");
+let lightboxItems = [];
+let lightboxIndex = 0;
+
+function openLightbox(items, index) {
+  if (!items?.length) return;
+  lightboxItems = items;
+  lightboxIndex = Math.max(0, Math.min(index || 0, items.length - 1));
+  showLightbox();
+  lightboxEl.hidden = false;
+}
+
+function showLightbox() {
+  const item = lightboxItems[lightboxIndex];
+  if (!item) return;
+  lightboxImg.src = item.dataUrl || item.url;
+  lightboxImg.alt = item.alt || "";
+  const parts = [];
+  if (item.pageTitle) parts.push(item.pageTitle);
+  if (item.url && !item.url.startsWith("data:")) parts.push(item.url);
+  if (lightboxItems.length > 1) {
+    parts.push(`${lightboxIndex + 1} / ${lightboxItems.length}`);
+  }
+  lightboxCaption.textContent = parts.join(" — ");
+  $("#lightboxPrev").style.visibility =
+    lightboxItems.length > 1 ? "visible" : "hidden";
+  $("#lightboxNext").style.visibility =
+    lightboxItems.length > 1 ? "visible" : "hidden";
+}
+
+function closeLightbox() {
+  lightboxEl.hidden = true;
+  lightboxImg.removeAttribute("src");
+  lightboxItems = [];
+}
+
+function stepLightbox(delta) {
+  if (!lightboxItems.length) return;
+  lightboxIndex =
+    (lightboxIndex + delta + lightboxItems.length) % lightboxItems.length;
+  showLightbox();
+}
+
+$("#lightboxClose").addEventListener("click", closeLightbox);
+$("#lightboxPrev").addEventListener("click", () => stepLightbox(-1));
+$("#lightboxNext").addEventListener("click", () => stepLightbox(1));
+lightboxEl.addEventListener("click", (e) => {
+  if (e.target === lightboxEl) closeLightbox();
+});
+document.addEventListener("keydown", (e) => {
+  if (lightboxEl.hidden) return;
+  if (e.key === "Escape") closeLightbox();
+  else if (e.key === "ArrowLeft") stepLightbox(-1);
+  else if (e.key === "ArrowRight") stepLightbox(1);
+});
 
 const tagFilterEl = $("#tagFilter");
 const searchBoxEl = $("#searchBox");

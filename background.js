@@ -4,6 +4,11 @@ const PENDING_KEY = "epcPendingMultiTag";
 
 const TAGS = [
   {
+    title: "Floorplan",
+    guidance:
+      "Property floorplan or sketch showing room layout, dimensions and orientation. The most recent image filed here is pinned at the top of the side panel for quick reference while filing other evidence.",
+  },
+  {
     title: "External Elevations",
     guidance:
       "All elevations appropriate to the detachment of the property. Elevation photos must be comprehensive enough to show the dwelling being assessed from its highest to lowest extent (a photo with the front door open is a good idea as it serves to prove that you had access to the property on the day of the assessment, just in case there are queries later).",

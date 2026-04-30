@@ -30,11 +30,15 @@ Requires Chrome 114+ for the `chrome.sidePanel` API.
 
 ## Default tags
 
-External Elevations · Wall Construction · Roof Construction · Loft Space
-Access · Loft Insulation · Roof Rooms · Openings · Primary Heating System ·
-Heating System Controls · Hot Water Cylinder · Hot Water Cylinder Thermostat ·
-Electricity Meter · Heating Fuel · Conservatory · Light Fittings · Renewables ·
-Additional Evidence
+Floorplan · External Elevations · Wall Construction · Roof Construction ·
+Loft Space Access · Loft Insulation · Roof Rooms · Openings · Primary
+Heating System · Heating System Controls · Hot Water Cylinder · Hot Water
+Cylinder Thermostat · Electricity Meter · Heating Fuel · Conservatory ·
+Light Fittings · Renewables · Additional Evidence
+
+The most recent **Floorplan** image is pinned at the top of the side panel
+for reference while filing other evidence. Click any thumbnail (pinned or
+in a tag) to open it full‑size; arrow keys / ‹ › navigate, Esc closes.
 
 ### Filter and search
 
