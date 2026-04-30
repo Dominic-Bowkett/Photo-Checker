@@ -1818,26 +1818,41 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
   if (!detected.length) return;
 
   const existing = existingPhotoUrls();
-  const items = detected.filter(
+  const newOnly = detected.filter(
     (p) => !p.url || !existing.has(p.url)
   );
+  const skippedAlready = detected.length - newOnly.length;
 
+  console.debug(
+    "[EPC] Auto-tag all:",
+    "detected =", detected.length,
+    "already-filed URLs in current bucket =", existing.size,
+    "new =", newOnly.length
+  );
+
+  let items = newOnly;
   if (!items.length) {
-    alert(
-      "No new photos to tag — every detected photo is already filed in a tag."
-    );
-    return;
+    // Nothing matched the "new" filter — but still let the user override,
+    // since the filter can stall on edge cases (stale URLs, blob:// etc).
+    if (
+      !confirm(
+        `Every detected photo (${detected.length}) appears to already be ` +
+          "filed in a tag in this assessment.\n\nTag all of them anyway?"
+      )
+    ) {
+      return;
+    }
+    items = detected.slice();
+  } else {
+    const promptText = skippedAlready
+      ? `Auto‑tag ${items.length} new photo${
+          items.length === 1 ? "" : "s"
+        }? (${skippedAlready} already filed will be skipped.)`
+      : `Auto‑tag ${items.length} new photo${
+          items.length === 1 ? "" : "s"
+        }?`;
+    if (!confirm(promptText)) return;
   }
-
-  const skippedAlready = detected.length - items.length;
-  const promptText = skippedAlready
-    ? `Auto‑tag ${items.length} new photo${
-        items.length === 1 ? "" : "s"
-      }? (${skippedAlready} already filed will be skipped.)`
-    : `Auto‑tag ${items.length} new photo${
-        items.length === 1 ? "" : "s"
-      }?`;
-  if (!confirm(promptText)) return;
 
   const wasLabel = detectedAutoTagBtn.textContent;
   detectedAutoTagBtn.disabled = true;
@@ -1852,7 +1867,6 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
       console.warn("Auto-tag failed for item", items[i]?.url, err);
       failures++;
     }
-    // Persist progressively so a long batch isn't lost on close.
     await save();
     if (i < items.length - 1) await new Promise((r) => setTimeout(r, 250));
   }
@@ -1860,14 +1874,13 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
   if (!lightboxEl.hidden && lightboxItems[lightboxIndex]) {
     renderLightboxPills(lightboxItems[lightboxIndex]);
   }
-  // Refresh the detected list so NEW/tagged states reflect the new memberships.
   if (detected.length) showDetected(detected);
   detectedAutoTagBtn.disabled = false;
   detectedAutoTagBtn.textContent = wasLabel;
   alert(
     `Auto‑tag complete. Added ${totalAdded} tag${
       totalAdded === 1 ? "" : "s"
-    } across ${items.length - failures} new photo${
+    } across ${items.length - failures} photo${
       items.length - failures === 1 ? "" : "s"
     }` + (failures ? `, ${failures} failed.` : ".")
   );
