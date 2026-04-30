@@ -80,6 +80,42 @@ button.danger:hover {
   font-size: 12px;
 }
 
+.filterbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px 0;
+  flex-wrap: wrap;
+}
+
+.filterbar label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.filterbar select,
+.filterbar input[type="search"] {
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  flex: 1 1 100px;
+  min-width: 80px;
+}
+
+.filterbar select {
+  flex: 0 1 160px;
+}
+
+.category.hidden {
+  display: none;
+}
+
+.photo.dim {
+  opacity: 0.25;
+}
+
 main {
   padding: 8px 12px 24px;
   display: flex;

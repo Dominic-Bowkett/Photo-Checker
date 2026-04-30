@@ -21,9 +21,29 @@
       Right‑click any image on a webpage and choose
       <strong>Add to EPC photo evidence</strong> to file it under a tag (or
       pick <em>Choose multiple tags…</em> for cross‑tagging). You can also
-      drag images directly into a tag below or use <strong>Scan tab</strong>
-      on an <code>energytrust.assessapp.com</code> page.
+      drag images directly into a tag below, use <strong>Scan tab</strong>
+      on an <code>energytrust.assessapp.com</code> page, or
+      <strong>Import file</strong> to pull images from a PDF or Word doc.
     </p>
+
+    <div class="filterbar">
+      <label for="tagFilter">View:</label>
+      <select id="tagFilter">
+        <option value="__all">All tags</option>
+        <option value="__nonempty">Only tags with photos</option>
+      </select>
+      <input id="searchBox" type="search" placeholder="Search photos…" />
+      <input
+        id="importFile"
+        type="file"
+        accept=".pdf,.docx,image/*"
+        multiple
+        hidden
+      />
+      <button id="importBtn" title="Extract images from a PDF or Word file">
+        Import file
+      </button>
+    </div>
 
     <section id="detected" hidden>
       <header class="detected-header">
@@ -83,6 +103,7 @@
       </div>
     </div>
 
+    <script src="vendor/pdf.js"></script>
     <script src="sidepanel.js" type="module"></script>
   </body>
 </html>

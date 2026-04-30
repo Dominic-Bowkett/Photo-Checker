@@ -162,6 +162,8 @@ function render() {
   for (const cat of state.categories) {
     categoriesEl.appendChild(renderCategory(cat));
   }
+  rebuildTagFilter();
+  applyFilters();
 }
 
 function renderCategory(cat) {
@@ -566,5 +568,335 @@ $("#multiTagSave").addEventListener("click", async () => {
 
 $("#multiTagCancel").addEventListener("click", () => closeMultiTagModal(true));
 $("#multiTagClose").addEventListener("click", () => closeMultiTagModal(true));
+
+const tagFilterEl = $("#tagFilter");
+const searchBoxEl = $("#searchBox");
+
+function rebuildTagFilter() {
+  const previous = tagFilterEl.value;
+  for (const opt of [...tagFilterEl.querySelectorAll("option[data-cat]")]) {
+    opt.remove();
+  }
+  for (const cat of state.categories) {
+    const opt = document.createElement("option");
+    opt.value = cat.id;
+    opt.dataset.cat = "1";
+    const count = cat.photos.length;
+    opt.textContent = count ? `${cat.title} (${count})` : cat.title;
+    tagFilterEl.appendChild(opt);
+  }
+  if ([...tagFilterEl.options].some((o) => o.value === previous)) {
+    tagFilterEl.value = previous;
+  }
+}
+
+function applyFilters() {
+  const sel = tagFilterEl.value;
+  const term = searchBoxEl.value.trim().toLowerCase();
+  const singleTag = sel !== "__all" && sel !== "__nonempty";
+
+  for (const node of categoriesEl.querySelectorAll(".category")) {
+    const id = node.dataset.id;
+    const cat = state.categories.find((c) => c.id === id);
+    if (!cat) continue;
+
+    let visible = true;
+    if (sel === "__nonempty") visible = cat.photos.length > 0;
+    else if (singleTag) visible = id === sel;
+
+    if (visible && term) {
+      const hay = (cat.title + " " + (cat.guidance || "")).toLowerCase();
+      const photoMatch = cat.photos.some((p) =>
+        ((p.pageTitle || "") + " " + (p.url || "") + " " + (p.alt || ""))
+          .toLowerCase()
+          .includes(term)
+      );
+      visible = hay.includes(term) || photoMatch;
+    }
+
+    node.classList.toggle("hidden", !visible);
+
+    // When the user picks a single tag, force it open so they see the photos
+    // immediately. Otherwise honour the persisted collapsed state.
+    const body = $(".category-body", node);
+    const toggle = $(".toggle", node);
+    const forceOpen = visible && (singleTag || term);
+    const collapsed = !forceOpen && cat.collapsed;
+    body.classList.toggle("collapsed", collapsed);
+    toggle.textContent = collapsed ? "▸" : "▾";
+  }
+}
+
+tagFilterEl.addEventListener("change", applyFilters);
+searchBoxEl.addEventListener("input", applyFilters);
+
+const importBtn = $("#importBtn");
+const importInput = $("#importFile");
+importBtn.addEventListener("click", () => importInput.click());
+importInput.addEventListener("change", async (e) => {
+  const files = [...(e.target.files || [])];
+  if (!files.length) return;
+  for (const file of files) {
+    try {
+      const photos = await extractFromFile(file);
+      if (photos.length) {
+        showDetected([...(detected || []), ...photos]);
+      } else {
+        alert(`No images found in ${file.name}.`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert(`Could not read ${file.name}: ${err?.message || err}`);
+    }
+  }
+  importInput.value = "";
+});
+
+async function extractFromFile(file) {
+  const name = file.name.toLowerCase();
+  if (file.type.startsWith("image/")) {
+    const dataUrl = await fileToDataUrl(file);
+    return [
+      {
+        url: file.name,
+        dataUrl,
+        pageTitle: file.name,
+        alt: "",
+        section: "Local file",
+      },
+    ];
+  }
+  if (name.endsWith(".docx")) return extractFromDocx(file);
+  if (name.endsWith(".pdf")) return extractFromPdf(file);
+  throw new Error("Unsupported file type. Use PDF, DOCX, or an image.");
+}
+
+async function extractFromDocx(file) {
+  // .docx is a ZIP. Read the central directory and stream out files under
+  // word/media/* using a small inline ZIP reader (deflate or stored only).
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const entries = readZipEntries(buf);
+  const photos = [];
+  for (const entry of entries) {
+    if (!/^word\/media\//i.test(entry.name)) continue;
+    if (!/\.(png|jpe?g|gif|bmp|webp)$/i.test(entry.name)) continue;
+    const bytes = await inflateEntry(buf, entry);
+    if (!bytes) continue;
+    const mime = mimeFromName(entry.name);
+    const blob = new Blob([bytes], { type: mime });
+    const dataUrl = await blobToDataUrl(blob);
+    photos.push({
+      url: `${file.name}#${entry.name}`,
+      dataUrl,
+      pageTitle: `${file.name} – ${entry.name.split("/").pop()}`,
+      alt: "",
+      section: "DOCX import",
+    });
+  }
+  return photos;
+}
+
+async function extractFromPdf(file) {
+  const pdfjsLib = window.pdfjsLib;
+  if (!pdfjsLib) throw new Error("pdf.js is not loaded");
+  pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
+    "vendor/pdf.worker.js"
+  );
+
+  const data = new Uint8Array(await file.arrayBuffer());
+  const pdf = await pdfjsLib.getDocument({ data, disableFontFace: true }).promise;
+  const photos = [];
+  const seen = new Set();
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum);
+    const ops = await page.getOperatorList();
+    const targets = new Set([
+      pdfjsLib.OPS.paintImageXObject,
+      pdfjsLib.OPS.paintInlineImageXObject,
+      pdfjsLib.OPS.paintJpegXObject,
+    ]);
+    for (let i = 0; i < ops.fnArray.length; i++) {
+      if (!targets.has(ops.fnArray[i])) continue;
+      const args = ops.argsArray[i];
+      const objId = typeof args[0] === "string" ? args[0] : null;
+      if (!objId || seen.has(objId)) continue;
+      seen.add(objId);
+      let imgObj;
+      try {
+        imgObj = await new Promise((resolve) =>
+          page.objs.get(objId, resolve)
+        );
+      } catch (err) {
+        console.warn("PDF image fetch failed", objId, err);
+        continue;
+      }
+      if (!imgObj || !imgObj.width || !imgObj.height) continue;
+      if (imgObj.width < 60 && imgObj.height < 60) continue;
+      try {
+        const dataUrl = await renderPdfImage(imgObj);
+        photos.push({
+          url: `${file.name}#page${pageNum}/${objId}`,
+          dataUrl,
+          pageTitle: `${file.name} – page ${pageNum}`,
+          alt: "",
+          section: "PDF import",
+        });
+      } catch (err) {
+        console.warn("PDF image render failed", objId, err);
+      }
+    }
+    page.cleanup();
+  }
+  return photos;
+}
+
+async function renderPdfImage(img) {
+  const w = img.width;
+  const h = img.height;
+  const canvas =
+    typeof OffscreenCanvas !== "undefined"
+      ? new OffscreenCanvas(w, h)
+      : Object.assign(document.createElement("canvas"), { width: w, height: h });
+  const ctx = canvas.getContext("2d");
+
+  if (img.bitmap && typeof img.bitmap.width === "number") {
+    ctx.drawImage(img.bitmap, 0, 0);
+  } else if (img.data) {
+    const id = ctx.createImageData(w, h);
+    fillRgba(id.data, img);
+    ctx.putImageData(id, 0, 0);
+  } else {
+    throw new Error("unrecognised image payload");
+  }
+
+  if (canvas.convertToBlob) {
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return blobToDataUrl(blob);
+  }
+  return canvas.toDataURL("image/png");
+}
+
+function fillRgba(out, img) {
+  const src = img.data;
+  const w = img.width;
+  const h = img.height;
+  const n = w * h;
+  const kind = img.kind;
+  // pdf.js ImageKind: 1 GRAYSCALE_1BPP, 2 RGB_24BPP, 3 RGBA_32BPP
+  if (kind === 3) {
+    out.set(src.subarray(0, out.length));
+    return;
+  }
+  if (kind === 2) {
+    for (let i = 0, j = 0; i < n; i++, j += 3) {
+      const k = i * 4;
+      out[k] = src[j];
+      out[k + 1] = src[j + 1];
+      out[k + 2] = src[j + 2];
+      out[k + 3] = 255;
+    }
+    return;
+  }
+  if (kind === 1) {
+    let bit = 0;
+    let byte = 0;
+    for (let i = 0; i < n; i++) {
+      const v = (src[byte] >> (7 - bit)) & 1 ? 255 : 0;
+      const k = i * 4;
+      out[k] = v;
+      out[k + 1] = v;
+      out[k + 2] = v;
+      out[k + 3] = 255;
+      bit++;
+      if (bit === 8) {
+        bit = 0;
+        byte++;
+      }
+    }
+    return;
+  }
+  // Fallback: assume already RGBA-ish
+  out.set(src.subarray(0, out.length));
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+function mimeFromName(name) {
+  const ext = name.split(".").pop().toLowerCase();
+  return (
+    {
+      png: "image/png",
+      jpg: "image/jpeg",
+      jpeg: "image/jpeg",
+      gif: "image/gif",
+      bmp: "image/bmp",
+      webp: "image/webp",
+    }[ext] || "application/octet-stream"
+  );
+}
+
+// Minimal ZIP reader sufficient for .docx files.
+// Supports STORED (method 0) and DEFLATE (method 8) via DecompressionStream.
+function readZipEntries(buf) {
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  // Find End of Central Directory record (search backwards, at most 64KB).
+  const max = Math.max(0, buf.length - 22);
+  const min = Math.max(0, buf.length - 65557);
+  let eocd = -1;
+  for (let i = max; i >= min; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("ZIP end-of-central-directory not found");
+  const totalEntries = view.getUint16(eocd + 10, true);
+  const cdSize = view.getUint32(eocd + 12, true);
+  const cdOffset = view.getUint32(eocd + 16, true);
+  const entries = [];
+  let p = cdOffset;
+  for (let i = 0; i < totalEntries; i++) {
+    if (view.getUint32(p, true) !== 0x02014b50) break;
+    const method = view.getUint16(p + 10, true);
+    const compSize = view.getUint32(p + 20, true);
+    const uncompSize = view.getUint32(p + 24, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    const localHeader = view.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(buf.subarray(p + 46, p + 46 + nameLen));
+    entries.push({ name, method, compSize, uncompSize, localHeader });
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+async function inflateEntry(buf, entry) {
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const lh = entry.localHeader;
+  if (view.getUint32(lh, true) !== 0x04034b50) return null;
+  const nameLen = view.getUint16(lh + 26, true);
+  const extraLen = view.getUint16(lh + 28, true);
+  const dataStart = lh + 30 + nameLen + extraLen;
+  const compressed = buf.subarray(dataStart, dataStart + entry.compSize);
+  if (entry.method === 0) return compressed;
+  if (entry.method === 8) {
+    const stream = new Blob([compressed])
+      .stream()
+      .pipeThrough(new DecompressionStream("deflate-raw"));
+    const out = await new Response(stream).arrayBuffer();
+    return new Uint8Array(out);
+  }
+  console.warn("Unsupported ZIP method", entry.method, entry.name);
+  return null;
+}
 
 load();

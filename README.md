@@ -36,6 +36,24 @@ Heating System Controls · Hot Water Cylinder · Hot Water Cylinder Thermostat �
 Electricity Meter · Heating Fuel · Conservatory · Light Fittings · Renewables ·
 Additional Evidence
 
+### Filter and search
+
+Above the tag list there is a **View** dropdown and a search box.
+
+- Pick a single tag from the dropdown to focus on it (it auto‑expands so
+  you can see its photos). "All tags" or "Only tags with photos" return
+  to the full list.
+- Type in the search box to keep only tags whose title, guidance, photo
+  source page or filename matches.
+
+### Import from PDF or Word
+
+Click **Import file** in the filter bar and pick one or more `.pdf`,
+`.docx`, or image files. Embedded images are extracted (PDF via PDF.js,
+DOCX by reading `word/media/*` straight out of the ZIP) and appear in the
+**Detected on page** strip, where you can drag them into a tag or use
+**Send all**.
+
 ### Auto-scan an assessment record
 
 On a page like `https://energytrust.assessapp.com/assessment_records/*` click
@@ -62,8 +80,11 @@ From the **Detected on page** strip you can:
 - `content.js` – exposes dragged `<img>` URLs on `dataTransfer` and
   responds to the side panel's `findEpcPhotos` message used by Scan tab.
 - `sidepanel.html` / `sidepanel.css` / `sidepanel.js` – the panel UI,
-  guidance display, drop handling, multi‑tag modal, persistence, and
-  export.
+  guidance display, drop handling, multi‑tag modal, persistence, export,
+  filter dropdown / search box, and PDF / DOCX import.
+- `vendor/pdf.js`, `vendor/pdf.worker.js` – Mozilla PDF.js v3.11.174
+  used to extract embedded images from uploaded PDFs. Apache 2.0 licensed
+  (see `vendor/PDFJS-LICENSE`).
 
 ## Notes
 
