@@ -101,7 +101,12 @@ const DEFAULT_CATEGORIES = [
   {
     title: "Primary Heating System",
     guidance:
-      "Primary heating system(s) (e.g. boiler showing any associated key features such as a condensate pipe or label indicating the boiler model if using PCDF). Include any secondary heating system here as well.",
+      "Primary heating system(s) (e.g. boiler showing any associated key features such as a condensate pipe or label indicating the boiler model if using PCDF).",
+  },
+  {
+    title: "Secondary Heating System",
+    guidance:
+      "Evidence of any secondary heating system (e.g. open fire, wood burner, electric panel heater) including a clear shot of the appliance and any labels or controls that confirm fuel type and rating.",
   },
   {
     title: "Heating System Controls",
@@ -219,6 +224,32 @@ async function load() {
         status: null,
         photos: [],
       });
+      mutated = true;
+    }
+    if (
+      !b.categories.some(
+        (c) => c.title.toLowerCase() === "secondary heating system"
+      )
+    ) {
+      const def = DEFAULT_CATEGORIES.find(
+        (d) => d.title === "Secondary Heating System"
+      );
+      const primaryIdx = b.categories.findIndex(
+        (c) => c.title.toLowerCase() === "primary heating system"
+      );
+      const newCat = {
+        id: uid(),
+        title: "Secondary Heating System",
+        guidance: def?.guidance || "",
+        collapsed: true,
+        status: null,
+        photos: [],
+      };
+      if (primaryIdx >= 0) {
+        b.categories.splice(primaryIdx + 1, 0, newCat);
+      } else {
+        b.categories.push(newCat);
+      }
       mutated = true;
     }
     // Backfill status field on existing categories.

@@ -45,7 +45,12 @@ const TAGS = [
   {
     title: "Primary Heating System",
     guidance:
-      "Primary heating system(s) (e.g. boiler showing any associated key features such as a condensate pipe or label indicating the boiler model if using PCDF). Include any secondary heating system here as well.",
+      "Primary heating system(s) (e.g. boiler showing any associated key features such as a condensate pipe or label indicating the boiler model if using PCDF).",
+  },
+  {
+    title: "Secondary Heating System",
+    guidance:
+      "Evidence of any secondary heating system (e.g. open fire, wood burner, electric panel heater) including a clear shot of the appliance and any labels or controls that confirm fuel type and rating.",
   },
   {
     title: "Heating System Controls",
