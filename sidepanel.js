@@ -2450,7 +2450,13 @@ function renderSiteNotesPinned() {
   if (!siteNotesPinned) return;
   siteNotesPinned.hidden = false;
   siteNotesImportBtn.hidden = !settings?.claudeApiKey;
-  const sn = getBucket().siteNotes;
+  const bucket = getBucket();
+  const sn = bucket.siteNotes;
+  const history = bucket.siteNotesHistory || [];
+
+  // History expander always reflects the bucket's history.
+  renderSiteNotesHistory(history);
+
   if (!sn) {
     siteNotesContent.hidden = true;
     siteNotesEmpty.hidden = false;
@@ -2460,6 +2466,17 @@ function renderSiteNotesPinned() {
   siteNotesContent.hidden = false;
   siteNotesSrcLabel.textContent = sn.url || "(local PDF)";
   siteNotesExtracted.textContent = JSON.stringify(sn.extracted || {}, null, 2);
+
+  const changesEl = document.getElementById("siteNotesChanges");
+  const changesTextEl = document.getElementById("siteNotesChangesText");
+  if (sn.changesSinceLast) {
+    changesEl.hidden = false;
+    changesTextEl.textContent = sn.changesSinceLast;
+  } else {
+    changesEl.hidden = true;
+    changesTextEl.textContent = "";
+  }
+
   // Checklist
   siteNotesChecklist.innerHTML = "";
   const ticks = sn.ticks || {};
@@ -2486,6 +2503,66 @@ function renderSiteNotesPinned() {
   if (document.activeElement !== siteNotesFeedback) {
     siteNotesFeedback.value = sn.studentFeedback || "";
   }
+}
+
+function renderSiteNotesHistory(history) {
+  const wrap = document.getElementById("siteNotesHistoryWrap");
+  const list = document.getElementById("siteNotesHistoryList");
+  const count = document.getElementById("siteNotesHistoryCount");
+  if (!wrap || !list || !count) return;
+  list.innerHTML = "";
+  count.textContent = String(history.length);
+  if (!history.length) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  history.forEach((entry, i) => {
+    const li = document.createElement("li");
+    const t = document.createElement("time");
+    const ts = entry.importedAt ? new Date(entry.importedAt) : null;
+    t.textContent = ts ? ts.toLocaleString() : `Version ${i + 1}`;
+    t.title = entry.url || "";
+    const view = document.createElement("button");
+    view.textContent = "View";
+    view.addEventListener("click", () => {
+      const json = JSON.stringify(entry.extracted || {}, null, 2);
+      const fb = entry.studentFeedback ? `\n\nStudent feedback:\n${entry.studentFeedback}` : "";
+      alert(`Imported ${ts ? ts.toLocaleString() : ""}\n${entry.url || ""}\n\n${json}${fb}`);
+    });
+    const restore = document.createElement("button");
+    restore.textContent = "Restore";
+    restore.title = "Make this the active version";
+    restore.addEventListener("click", async () => {
+      if (!confirm("Restore this version as the current site notes?")) return;
+      const bucket = getBucket();
+      const current = bucket.siteNotes;
+      bucket.siteNotesHistory = (bucket.siteNotesHistory || []).filter(
+        (_, idx) => idx !== i
+      );
+      if (current) bucket.siteNotesHistory.unshift(current);
+      bucket.siteNotes = entry;
+      await save();
+      render();
+    });
+    const del = document.createElement("button");
+    del.className = "danger";
+    del.textContent = "Delete";
+    del.addEventListener("click", async () => {
+      if (!confirm("Delete this archived version?")) return;
+      const bucket = getBucket();
+      bucket.siteNotesHistory = (bucket.siteNotesHistory || []).filter(
+        (_, idx) => idx !== i
+      );
+      await save();
+      render();
+    });
+    li.appendChild(t);
+    li.appendChild(view);
+    li.appendChild(restore);
+    li.appendChild(del);
+    list.appendChild(li);
+  });
 }
 
 siteNotesFeedback?.addEventListener("input", () => {
@@ -2533,6 +2610,26 @@ $("#siteNotesReimport")?.addEventListener("click", () => {
   siteNotesUrlEl.value = sn.url;
   siteNotesModal.hidden = false;
 });
+
+$("#siteNotesDelete")?.addEventListener("click", async () => {
+  const bucket = getBucket();
+  const sn = bucket.siteNotes;
+  if (!sn) return;
+  if (
+    !confirm(
+      "Delete the current site notes? It will be moved into history so you can compare against it later."
+    )
+  ) {
+    return;
+  }
+  bucket.siteNotesHistory = bucket.siteNotesHistory || [];
+  bucket.siteNotesHistory.unshift(sn);
+  // Cap history at 10 to keep storage sensible.
+  bucket.siteNotesHistory = bucket.siteNotesHistory.slice(0, 10);
+  delete bucket.siteNotes;
+  await save();
+  render();
+});
 siteNotesUrlEl?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
@@ -2579,8 +2676,10 @@ async function runSiteNotesImport(url) {
 
   siteNotesStatus.textContent = "Asking Claude…";
   let result;
+  const bucket = getBucket();
+  const previous = bucket.siteNotes || null;
   try {
-    result = await callClaudeForSiteNotes(text);
+    result = await callClaudeForSiteNotes(text, previous);
   } catch (err) {
     siteNotesStatus.textContent =
       "Claude call failed: " + (err?.message || err);
@@ -2590,14 +2689,21 @@ async function runSiteNotesImport(url) {
   const photoSummary = summarisePhotosForChecks();
   result.checklist = mergePhotoFlags(result.checklist || [], photoSummary);
 
-  const bucket = getBucket();
+  // Archive the previous import so the assessor can compare versions.
+  if (previous) {
+    bucket.siteNotesHistory = bucket.siteNotesHistory || [];
+    bucket.siteNotesHistory.unshift(previous);
+    bucket.siteNotesHistory = bucket.siteNotesHistory.slice(0, 10);
+  }
+
   bucket.siteNotes = {
     url,
     importedAt: Date.now(),
     extracted: result.extracted || {},
     checklist: result.checklist || [],
     studentFeedback: result.studentFeedback || "",
-    ticks: bucket.siteNotes?.url === url ? bucket.siteNotes.ticks || {} : {},
+    changesSinceLast: result.changesSinceLast || "",
+    ticks: previous?.url === url ? previous.ticks || {} : {},
   };
   await save();
   render();
@@ -2659,12 +2765,17 @@ function mergePhotoFlags(checklist, photoSummary) {
   });
 }
 
-async function callClaudeForSiteNotes(text) {
+async function callClaudeForSiteNotes(text, previous) {
   const tagList = getBucket().categories.map((c) => c.title);
   const photoSummary = summarisePhotosForChecks();
   const photoSummaryText = Object.entries(photoSummary)
     .map(([t, n]) => `${t}: ${n}`)
     .join(", ");
+
+  const previousExtracted = previous?.extracted
+    ? JSON.stringify(previous.extracted)
+    : null;
+  const previousFeedback = previous?.studentFeedback || null;
 
   const SYSTEM = [
     "You are an EPC / RdSAP site notes auditor for UK EPC assessor trainees.",
@@ -2672,7 +2783,11 @@ async function callClaudeForSiteNotes(text) {
     "of available photo evidence tags in the side panel.",
     "",
     "Return ONLY a JSON object with this exact shape:",
-    '{ "extracted": {...}, "checklist": [{"id": "kebab-id", "label": "...", "severity": "must|should|info"}], "studentFeedback": "..." }',
+    '{ "extracted": {...}, "checklist": [{"id": "kebab-id", "label": "...", "severity": "must|should|info"}], "studentFeedback": "...", "changesSinceLast": "..." }',
+    "If a previous version is supplied, populate `changesSinceLast` with a",
+    "concise summary of what the student changed (or didn't change) compared",
+    "to it, focused on whether queries from the previous round were addressed.",
+    "If no previous version is supplied, leave `changesSinceLast` as an empty string.",
     "",
     "FIELDS to populate in `extracted` (omit any you cannot find):",
     "- detachmentType, builtForm, propertyType, ageRangeMain, ageRangeExtensions",
@@ -2768,7 +2883,14 @@ async function callClaudeForSiteNotes(text) {
         {
           role: "user",
           content:
-            "Site notes PDF text follows. Extract and check.\n\n" +
+            (previousExtracted
+              ? "Previous version's extracted JSON:\n" +
+                previousExtracted.slice(0, 8000) +
+                "\n\nPrevious feedback that was sent to the student:\n" +
+                (previousFeedback || "(none)").slice(0, 4000) +
+                "\n\n"
+              : "") +
+            "Current site notes PDF text follows. Extract and check.\n\n" +
             text.slice(0, 60000),
         },
       ],

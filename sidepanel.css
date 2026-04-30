@@ -623,6 +623,71 @@ main {
   font-weight: 700;
 }
 
+.site-notes-changes {
+  background: #ecfdf5;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.site-notes-changes p {
+  margin: 4px 0 0;
+  color: var(--charcoal);
+  white-space: pre-wrap;
+}
+
+.site-notes-history {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.site-notes-history summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.site-notes-history ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.site-notes-history li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fafbfc;
+}
+
+.site-notes-history li time {
+  flex: 1;
+  color: var(--charcoal);
+  font-size: 11.5px;
+}
+
+.site-notes-history li button {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.site-notes-history li button.danger {
+  color: var(--danger);
+  border-color: #f3c0c0;
+}
+
 #allPhotosPinned > header {
   border-bottom: none;
 }

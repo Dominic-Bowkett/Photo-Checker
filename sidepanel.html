@@ -107,6 +107,11 @@
           <div class="site-notes-source">
             <span id="siteNotesSrcLabel"></span>
             <button id="siteNotesReimport" title="Re-run the import">↻</button>
+            <button id="siteNotesDelete" title="Delete current site notes (kept in history)">🗑</button>
+          </div>
+          <div id="siteNotesChanges" class="site-notes-changes" hidden>
+            <h3 class="snh">Changes since previous version</h3>
+            <p id="siteNotesChangesText"></p>
           </div>
           <details class="site-notes-extract">
             <summary>Extracted fields</summary>
@@ -119,6 +124,10 @@
           <div class="site-notes-actions">
             <button id="siteNotesCopy" class="primary">Copy feedback</button>
           </div>
+          <details class="site-notes-history" id="siteNotesHistoryWrap" hidden>
+            <summary>Previous imports (<span id="siteNotesHistoryCount">0</span>)</summary>
+            <ul id="siteNotesHistoryList"></ul>
+          </details>
         </div>
       </div>
     </section>
