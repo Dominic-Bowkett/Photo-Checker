@@ -3335,6 +3335,7 @@ async function callClaudeForSiteNotes(text, previous) {
     "- Water heating: immersion single vs dual photo evidence",
     "- Cylinder thermostat photo if 'Yes' selected",
     "- Cylinder insulation thickness measurement photo if cylinder is present",
+    "- If the site notes mention a shower (electric / instantaneous mains-pressure / mixer) or any bath, ensure a Shower / Bath photo is filed; flag must when the site notes record a shower or bath but no photo evidence is present.",
     "- Photovoltaics in recommended measures but Addendum 15 not selected",
     "",
     "STUDENT FEEDBACK should be a friendly, plain-English message the trainee can paste:",
