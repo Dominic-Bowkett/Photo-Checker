@@ -2567,7 +2567,7 @@ function getItemStatus(sn, id) {
   return null;
 }
 
-async function setItemStatus(sn, id, status) {
+function setItemStatus(sn, id, status) {
   sn.itemStatus = sn.itemStatus || {};
   if (status) sn.itemStatus[id] = status;
   else delete sn.itemStatus[id];
@@ -2575,7 +2575,8 @@ async function setItemStatus(sn, id, status) {
   sn.ticks = sn.ticks || {};
   if (status === "done") sn.ticks[id] = true;
   else delete sn.ticks[id];
-  await save();
+  // Persist in the background — UI has already updated synchronously.
+  save().catch((err) => console.error("[EPC] save failed", err));
 }
 
 function renderChecklistItems(sn) {
@@ -2634,9 +2635,9 @@ function renderChecklistItems(sn) {
     setOpen(startOpen);
     expandBtn.addEventListener("click", () => setOpen(detail.hidden));
 
-    cb.addEventListener("change", async () => {
+    cb.addEventListener("change", () => {
       const newStatus = cb.checked ? "done" : null;
-      await setItemStatus(sn, item.id, newStatus);
+      // Update UI synchronously first so the flag flips immediately.
       li.classList.toggle("done", newStatus === "done");
       li.classList.remove("flagged");
       flagBtn.classList.remove("active");
@@ -2644,23 +2645,25 @@ function renderChecklistItems(sn) {
       if (!sn.uiShowCompleted) {
         li.classList.toggle("hidden-done", newStatus === "done");
       }
-      // Done collapses the row.
       if (newStatus === "done") setOpen(false);
       updateCheckSummary(sn);
+      // Persist in the background.
+      setItemStatus(sn, item.id, newStatus);
     });
 
-    flagBtn.addEventListener("click", async () => {
+    flagBtn.addEventListener("click", () => {
       const cur = getItemStatus(sn, item.id);
       const newStatus = cur === "flagged" ? null : "flagged";
-      await setItemStatus(sn, item.id, newStatus);
+      // Update UI synchronously.
       li.classList.toggle("flagged", newStatus === "flagged");
       li.classList.remove("done", "hidden-done");
       flagBtn.classList.toggle("active", newStatus === "flagged");
       cb.checked = false;
       li.dataset.status = newStatus || "";
-      // Flagged collapses the row but keeps it visible.
       if (newStatus === "flagged") setOpen(false);
       updateCheckSummary(sn);
+      // Persist in the background.
+      setItemStatus(sn, item.id, newStatus);
     });
 
     li.appendChild(cb);
@@ -2886,7 +2889,7 @@ async function generateStudentFeedback(sn) {
     (it) => getItemStatus(sn, it.id) === "flagged"
   );
   if (!flagged.length) {
-    return "Hi,\n\nThanks — nothing flagged in my review, the assessment looks in order.\n\nThanks!";
+    return "Nothing flagged in my review — the assessment looks in order.\n\nThanks!";
   }
   // Strip evidenceTags so the prompt doesn't surface internal tag names.
   const flaggedForPrompt = flagged.map((it) => ({
@@ -2903,7 +2906,16 @@ async function generateStudentFeedback(sn) {
     "do NOT reference any internal tag names, category names, side-panel",
     "structure, or that an automated tool was used. The trainee should not",
     "see any technical scaffolding.",
-    "End with a friendly sign-off such as 'Thanks!'.",
+    "TONE / FORMAT RULES:",
+    "- Do NOT begin the message with 'Hi <name>,' or any name greeting — the",
+    "  assessor doesn't know who they're addressing. Open with a neutral line",
+    "  like 'A few items to review:' or jump straight into the bullets.",
+    "- Do NOT offer to be contacted directly (no 'feel free to call me',",
+    "  'reach out to me', 'let me know if you have questions' etc.).",
+    "- Where appropriate, direct the trainee to contact the helpline if they",
+    "  need help (do not invent specific numbers — just say 'please contact",
+    "  the helpline').",
+    "- End with a short friendly sign-off such as 'Thanks!'.",
   ].join("\n");
   const body = JSON.stringify(
     {
