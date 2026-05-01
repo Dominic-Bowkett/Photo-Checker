@@ -29,6 +29,60 @@ body {
   height: 100%;
 }
 
+.toast-stack {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  background: var(--charcoal);
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.35;
+  border-left: 3px solid var(--yellow);
+  border-radius: 4px;
+  padding: 7px 10px;
+  margin-top: 6px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.toast.error {
+  border-left-color: #dc2626;
+}
+
+.toast.success {
+  border-left-color: #16a34a;
+}
+
+.toast .msg {
+  flex: 1;
+  word-break: break-word;
+}
+
+.toast .close {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.toast .close:hover {
+  color: #fff;
+}
+
 .topbar {
   position: sticky;
   top: 0;

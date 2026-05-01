@@ -1647,12 +1647,18 @@ importInput.addEventListener("change", async (e) => {
       const photos = await extractFromFile(file);
       if (photos.length) {
         showDetected([...(detected || []), ...photos]);
+        showToast(
+          `Imported ${photos.length} image${photos.length === 1 ? "" : "s"} from ${file.name}.`,
+          { kind: "success" }
+        );
       } else {
-        alert(`No images found in ${file.name}.`);
+        showToast(`No images found in ${file.name}.`, { kind: "error" });
       }
     } catch (err) {
       console.error(err);
-      alert(`Could not read ${file.name}: ${err?.message || err}`);
+      showToast(`Could not read ${file.name}: ${err?.message || err}`, {
+        kind: "error",
+      });
     }
   }
   importInput.value = "";
@@ -2054,7 +2060,9 @@ async function applySuggestions(item, suggestions, dataUrl) {
 
 async function autoTagItem(item, btn) {
   if (!settings.claudeApiKey) {
-    alert("Set your Claude API key in Settings first (gear icon).");
+    showToast("Set your Claude API key in Settings first (gear icon).", {
+      kind: "error",
+    });
     return;
   }
   const wasLabel = btn.textContent;
@@ -2074,11 +2082,15 @@ async function autoTagItem(item, btn) {
   } catch (err) {
     console.error("Auto-tag failed", err);
     if (err?.status === 401 || err?.status === 403) {
-      alert(
-        "Claude rejected your API key. Open ⚙ Settings and paste a valid key (from console.anthropic.com → API keys)."
+      showToast(
+        "Claude rejected your API key. Open ⚙ Settings and paste a valid key (console.anthropic.com → API keys).",
+        { kind: "error", ttl: 8000 }
       );
     } else {
-      alert("Auto-tag failed: " + (err?.message || err));
+      showToast("Auto-tag failed: " + (err?.message || err), {
+        kind: "error",
+        ttl: 8000,
+      });
     }
     btn.textContent = wasLabel;
   } finally {
@@ -2097,7 +2109,7 @@ function refreshDetectedAutoTagVisibility() {
 
 detectedAutoTagBtn?.addEventListener("click", async () => {
   if (!settings.claudeApiKey) {
-    alert("Set your Claude API key in Settings first (gear icon).");
+    showToast("Set your Claude API key in Settings first (gear icon).", { kind: "error" });
     return;
   }
   if (!detected.length) return;
@@ -2155,8 +2167,9 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
         await save();
         detectedAutoTagBtn.disabled = false;
         detectedAutoTagBtn.textContent = wasLabel;
-        alert(
-          `Stopped: Claude rejected your API key (${err.status}). Open ⚙ Settings and paste a valid key, then try again.`
+        showToast(
+          `Stopped: Claude rejected your API key (${err.status}). Open ⚙ Settings and paste a valid key, then try again.`,
+          { kind: "error", ttl: 8000 }
         );
         return;
       }
@@ -2164,10 +2177,11 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
         await save();
         detectedAutoTagBtn.disabled = false;
         detectedAutoTagBtn.textContent = wasLabel;
-        alert(
+        showToast(
           `Stopped: Claude returned 429 (rate limited) on photo ${
             i + 1
-          }/${items.length}. Wait a minute and run Auto‑tag all again — already-tagged photos will be skipped.`
+          }/${items.length}. Wait a minute and run Auto‑tag all again — already-tagged photos will be skipped.`,
+          { kind: "error", ttl: 8000 }
         );
         return;
       }
@@ -2182,12 +2196,13 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
   if (detected.length) showDetected(detected);
   detectedAutoTagBtn.disabled = false;
   detectedAutoTagBtn.textContent = wasLabel;
-  alert(
+  showToast(
     `Auto‑tag complete. Added ${totalAdded} tag${
       totalAdded === 1 ? "" : "s"
     } across ${items.length - failures} photo${
       items.length - failures === 1 ? "" : "s"
-    }` + (failures ? `, ${failures} failed.` : ".")
+    }` + (failures ? `, ${failures} failed.` : "."),
+    { kind: failures ? "error" : "success" }
   );
 });
 
@@ -2306,7 +2321,7 @@ function floorplanResultAsText(result) {
 
 async function runFloorplanCheck(photo) {
   if (!settings.claudeApiKey) {
-    alert("Set your Claude API key in Settings first (gear icon).");
+    showToast("Set your Claude API key in Settings first (gear icon).", { kind: "error" });
     return;
   }
 
@@ -2430,6 +2445,65 @@ $("#floorplanCheckCopy").addEventListener("click", async () => {
     alert(text);
   }
 });
+
+// ---- In-panel toast notifications ----------------------------------------
+const toastStack = document.getElementById("toastStack");
+function showToast(msg, opts = {}) {
+  if (!toastStack) {
+    console.log("[toast]", msg);
+    return;
+  }
+  const node = document.createElement("div");
+  node.className = "toast" + (opts.kind ? " " + opts.kind : "");
+  const m = document.createElement("div");
+  m.className = "msg";
+  m.textContent = msg;
+  const x = document.createElement("button");
+  x.className = "close";
+  x.textContent = "×";
+  x.title = "Dismiss";
+  x.addEventListener("click", () => node.remove());
+  node.appendChild(m);
+  node.appendChild(x);
+  toastStack.appendChild(node);
+  const ttl = opts.ttl ?? 5000;
+  if (ttl > 0) setTimeout(() => node.remove(), ttl);
+  return node;
+}
+
+function tryParseLooseJson(text) {
+  if (!text) throw new Error("empty response");
+  // Find the outermost { ... } block first.
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("no JSON object found");
+  let candidate = text.slice(start, end + 1);
+  // Common Claude JSON faults:
+  //   - trailing commas before } or ]
+  //   - smart quotes
+  //   - stray backslashes
+  candidate = candidate
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/,(\s*[}\]])/g, "$1");
+  try {
+    return JSON.parse(candidate);
+  } catch (e1) {
+    // One more try after removing newlines inside string-ish gaps.
+    try {
+      const aggressive = candidate
+        .replace(/\\(?!["\\/bfnrtu])/g, "")
+        .replace(/,(\s*[}\]])/g, "$1");
+      return JSON.parse(aggressive);
+    } catch (_) {
+      const err = new Error(
+        "Could not parse Claude JSON response: " + e1.message
+      );
+      err.rawText = text;
+      throw err;
+    }
+  }
+}
 
 // ---- Site notes import + assessor checklist -----------------------------
 const siteNotesPinned = $("#siteNotesPinned");
@@ -2589,7 +2663,7 @@ $("#siteNotesCopy")?.addEventListener("click", async () => {
 
 siteNotesImportBtn?.addEventListener("click", () => {
   if (!settings.claudeApiKey) {
-    alert("Set your Claude API key in Settings first (gear icon).");
+    showToast("Set your Claude API key in Settings first (gear icon).", { kind: "error" });
     return;
   }
   siteNotesUrlEl.value = "";
@@ -2646,35 +2720,54 @@ $("#siteNotesGo")?.addEventListener("click", async () => {
 
 async function runSiteNotesImport(url) {
   if (!settings.claudeApiKey) {
-    alert("Set your Claude API key in Settings first (gear icon).");
+    showToast("Set your Claude API key in Settings first (gear icon).", { kind: "error" });
     return;
   }
-  siteNotesStatus.textContent = "Fetching PDF…";
+  const wasLabel = siteNotesImportBtn?.textContent;
+  if (siteNotesImportBtn) {
+    siteNotesImportBtn.disabled = true;
+    siteNotesImportBtn.textContent = "Fetching PDF…";
+  }
+  const setProgress = (msg) => {
+    siteNotesStatus.textContent = msg;
+    if (siteNotesImportBtn) siteNotesImportBtn.textContent = msg;
+  };
+  const finish = () => {
+    if (siteNotesImportBtn) {
+      siteNotesImportBtn.disabled = false;
+      siteNotesImportBtn.textContent = wasLabel || "✨ Import PDF";
+    }
+  };
+
+  setProgress("Fetching PDF…");
   let blob;
   try {
     blob = await fetchPdfBlob(url);
   } catch (err) {
     siteNotesStatus.textContent = "Fetch failed: " + (err?.message || err);
+    finish();
     return;
   }
   console.debug("[EPC] site notes PDF fetched", blob?.size, blob?.type);
 
-  siteNotesStatus.textContent = "Reading PDF text…";
+  setProgress("Reading PDF…");
   let text;
   try {
     text = await extractPdfText(blob);
   } catch (err) {
     siteNotesStatus.textContent = "PDF read failed: " + (err?.message || err);
+    finish();
     return;
   }
   console.debug("[EPC] site notes PDF text length", text?.length);
   if (!text || text.trim().length < 80) {
     siteNotesStatus.textContent =
       "PDF contained very little extractable text — is it a scanned image PDF?";
+    finish();
     return;
   }
 
-  siteNotesStatus.textContent = "Asking Claude…";
+  setProgress("Asking Claude…");
   let result;
   const bucket = getBucket();
   const previous = bucket.siteNotes || null;
@@ -2683,6 +2776,7 @@ async function runSiteNotesImport(url) {
   } catch (err) {
     siteNotesStatus.textContent =
       "Claude call failed: " + (err?.message || err);
+    finish();
     return;
   }
 
@@ -2707,12 +2801,13 @@ async function runSiteNotesImport(url) {
   };
   await save();
   render();
+  finish();
   siteNotesStatus.textContent = "Done.";
   setTimeout(() => {
     if (siteNotesStatus.textContent === "Done.") {
       siteNotesStatus.textContent = "";
     }
-  }, 1500);
+  }, 2000);
 }
 
 async function fetchPdfBlob(url) {
@@ -2903,7 +2998,7 @@ async function callClaudeForSiteNotes(text, previous) {
     },
     body: JSON.stringify({
       model: settings.claudeModel || "claude-sonnet-4-6",
-      max_tokens: 4000,
+      max_tokens: 8000,
       system: SYSTEM,
       messages: [
         {
@@ -2930,9 +3025,19 @@ async function callClaudeForSiteNotes(text, previous) {
   }
   const data = await resp.json();
   const out = data?.content?.[0]?.text || "";
-  const objMatch = out.match(/\{[\s\S]*\}/);
-  if (!objMatch) throw new Error("Could not parse Claude response");
-  const parsed = JSON.parse(objMatch[0]);
+  console.debug("[EPC] site notes raw response length", out.length);
+  let parsed;
+  try {
+    parsed = tryParseLooseJson(out);
+  } catch (err) {
+    console.error("[EPC] site notes JSON parse failed", err, out);
+    throw err;
+  }
+  if (data?.stop_reason === "max_tokens") {
+    console.warn(
+      "[EPC] Claude hit max_tokens — response may be truncated; bump in code if this happens often"
+    );
+  }
   // Normalise checklist items so each has an id.
   parsed.checklist = (parsed.checklist || []).map((it, i) => ({
     id:
