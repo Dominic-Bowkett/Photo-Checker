@@ -356,7 +356,7 @@ function notify(message) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "fetchImage" && typeof msg.url === "string") {
-    fetch(msg.url, { credentials: "include", mode: "cors" })
+    fetch(msg.url, { credentials: "omit", mode: "cors" })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
@@ -369,12 +369,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg?.type === "fetchUrlBytes" && typeof msg.url === "string") {
-    fetch(msg.url, { credentials: "include" })
+    fetch(msg.url, { credentials: "omit", mode: "cors" })
       .then(async (res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
         const dataUrl = await blobToDataUrl(blob);
-        sendResponse({ ok: true, dataUrl, contentType: blob.type });
+        sendResponse({
+          ok: true,
+          dataUrl,
+          contentType: blob.type || res.headers.get("content-type") || "",
+        });
       })
       .catch((err) =>
         sendResponse({ ok: false, error: err?.message || String(err) })

@@ -2652,13 +2652,12 @@ async function runSiteNotesImport(url) {
   siteNotesStatus.textContent = "Fetching PDF…";
   let blob;
   try {
-    const res = await fetch(url, { credentials: "include" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    blob = await res.blob();
+    blob = await fetchPdfBlob(url);
   } catch (err) {
     siteNotesStatus.textContent = "Fetch failed: " + (err?.message || err);
     return;
   }
+  console.debug("[EPC] site notes PDF fetched", blob?.size, blob?.type);
 
   siteNotesStatus.textContent = "Reading PDF text…";
   let text;
@@ -2668,6 +2667,7 @@ async function runSiteNotesImport(url) {
     siteNotesStatus.textContent = "PDF read failed: " + (err?.message || err);
     return;
   }
+  console.debug("[EPC] site notes PDF text length", text?.length);
   if (!text || text.trim().length < 80) {
     siteNotesStatus.textContent =
       "PDF contained very little extractable text — is it a scanned image PDF?";
@@ -2713,6 +2713,32 @@ async function runSiteNotesImport(url) {
       siteNotesStatus.textContent = "";
     }
   }, 1500);
+}
+
+async function fetchPdfBlob(url) {
+  // Try fetching from the side panel directly first.
+  try {
+    const res = await fetch(url, { credentials: "omit", mode: "cors" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    if (blob && blob.size > 0) return blob;
+    throw new Error("empty body");
+  } catch (errDirect) {
+    console.warn("[EPC] direct PDF fetch failed, trying background", errDirect);
+  }
+  // Fallback: ask the background worker (uses host_permissions to bypass CORS).
+  const res = await new Promise((resolve) =>
+    chrome.runtime.sendMessage({ type: "fetchUrlBytes", url }, resolve)
+  );
+  if (!res?.ok) {
+    throw new Error(res?.error || "background fetch failed");
+  }
+  const m = String(res.dataUrl || "").match(/^data:([^;]+);base64,(.*)$/);
+  if (!m) throw new Error("invalid response from background fetcher");
+  const bin = atob(m[2]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: m[1] });
 }
 
 async function extractPdfText(blob) {
