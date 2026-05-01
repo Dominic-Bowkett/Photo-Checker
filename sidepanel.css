@@ -635,13 +635,45 @@ main {
 
 #siteNotesChecklist li {
   display: grid;
-  grid-template-columns: 18px 1fr auto;
-  gap: 4px 8px;
+  grid-template-columns: 18px 22px 1fr auto;
+  gap: 4px 6px;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #fff;
   align-items: start;
+}
+
+#siteNotesChecklist li.flagged {
+  border-color: #f97316;
+  background: #fff7ed;
+}
+
+#siteNotesChecklist li.flagged .label {
+  color: #9a3412;
+}
+
+#siteNotesChecklist .flag-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 0;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#siteNotesChecklist .flag-btn:hover {
+  color: #f97316;
+}
+
+#siteNotesChecklist .flag-btn.active {
+  color: #f97316;
+  text-shadow: 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+#siteNotesChecklist .item-detail {
+  grid-column: 3 / -1;
 }
 
 #siteNotesChecklist li.hidden-done {
@@ -846,7 +878,8 @@ main {
   margin-left: 6px;
 }
 
-#allPhotosReview {
+#allPhotosReview,
+#allPhotosPinned #importBtn {
   font: inherit;
   background: var(--yellow);
   color: var(--black);
@@ -857,7 +890,8 @@ main {
   cursor: pointer;
 }
 
-#allPhotosReview:hover {
+#allPhotosReview:hover,
+#allPhotosPinned #importBtn:hover {
   background: #e6c100;
   border-color: #e6c100;
 }
@@ -865,6 +899,18 @@ main {
 #allPhotosReview[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+#allPhotosPinned #importBtn {
+  background: #fff;
+  border-color: var(--charcoal);
+  color: var(--charcoal);
+}
+
+#allPhotosPinned #importBtn:hover {
+  background: var(--yellow);
+  border-color: var(--yellow);
+  color: var(--black);
 }
 
 .pinned > header button:not(.ai-action) {

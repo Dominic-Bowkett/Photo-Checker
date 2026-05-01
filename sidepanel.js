@@ -2560,42 +2560,61 @@ function renderSiteNotesPinned() {
   }
 }
 
+function getItemStatus(sn, id) {
+  if (sn.itemStatus && id in sn.itemStatus) return sn.itemStatus[id] || null;
+  // Backwards compat with v1 ticks: tick = done.
+  if (sn.ticks && sn.ticks[id]) return "done";
+  return null;
+}
+
+async function setItemStatus(sn, id, status) {
+  sn.itemStatus = sn.itemStatus || {};
+  if (status) sn.itemStatus[id] = status;
+  else delete sn.itemStatus[id];
+  // Keep ticks in sync for older code paths.
+  sn.ticks = sn.ticks || {};
+  if (status === "done") sn.ticks[id] = true;
+  else delete sn.ticks[id];
+  await save();
+}
+
 function renderChecklistItems(sn) {
   siteNotesChecklist.innerHTML = "";
-  const ticks = sn.ticks || {};
   const showDone = !!sn.uiShowCompleted;
   const items = sn.checklist || [];
   let doneCount = 0;
+  let flagCount = 0;
   for (const item of items) {
-    if (ticks[item.id]) doneCount++;
+    const status = getItemStatus(sn, item.id);
+    if (status === "done") doneCount++;
+    else if (status === "flagged") flagCount++;
+
     const li = document.createElement("li");
     li.dataset.severity = item.severity || "info";
     li.dataset.id = item.id;
-    if (ticks[item.id]) {
+    li.dataset.status = status || "";
+    if (status === "done") {
       li.classList.add("done");
       if (!showDone) li.classList.add("hidden-done");
+    } else if (status === "flagged") {
+      li.classList.add("flagged");
     }
 
     const cb = document.createElement("input");
     cb.type = "checkbox";
-    cb.checked = !!ticks[item.id];
-    cb.addEventListener("change", async () => {
-      sn.ticks = sn.ticks || {};
-      sn.ticks[item.id] = cb.checked;
-      li.classList.toggle("done", cb.checked);
-      if (!sn.uiShowCompleted) {
-        li.classList.toggle("hidden-done", cb.checked);
-      }
-      updateCheckSummary(sn);
-      await save();
-    });
+    cb.checked = status === "done";
+    cb.title = "Tick when evidence is acceptable";
+
+    const flagBtn = document.createElement("button");
+    flagBtn.type = "button";
+    flagBtn.className = "flag-btn" + (status === "flagged" ? " active" : "");
+    flagBtn.textContent = "⚑";
+    flagBtn.title = "Flag for student feedback";
 
     const label = document.createElement("div");
     label.className = "label";
     label.textContent = item.label;
 
-    // Expand-toggle + photo strip. Auto-opened when there are linked photos
-    // so the assessor sees the evidence without having to click each row.
     const expandBtn = document.createElement("button");
     expandBtn.className = "expand-toggle";
     expandBtn.type = "button";
@@ -2605,7 +2624,7 @@ function renderChecklistItems(sn) {
     detail.className = "item-detail";
 
     const linkedPhotoCount = countLinkedPhotos(item);
-    const startOpen = linkedPhotoCount > 0 && !ticks[item.id];
+    const startOpen = linkedPhotoCount > 0 && !status;
 
     const setOpen = (open) => {
       detail.hidden = !open;
@@ -2615,25 +2634,61 @@ function renderChecklistItems(sn) {
     setOpen(startOpen);
     expandBtn.addEventListener("click", () => setOpen(detail.hidden));
 
+    cb.addEventListener("change", async () => {
+      const newStatus = cb.checked ? "done" : null;
+      await setItemStatus(sn, item.id, newStatus);
+      li.classList.toggle("done", newStatus === "done");
+      li.classList.remove("flagged");
+      flagBtn.classList.remove("active");
+      li.dataset.status = newStatus || "";
+      if (!sn.uiShowCompleted) {
+        li.classList.toggle("hidden-done", newStatus === "done");
+      }
+      // Done collapses the row.
+      if (newStatus === "done") setOpen(false);
+      updateCheckSummary(sn);
+    });
+
+    flagBtn.addEventListener("click", async () => {
+      const cur = getItemStatus(sn, item.id);
+      const newStatus = cur === "flagged" ? null : "flagged";
+      await setItemStatus(sn, item.id, newStatus);
+      li.classList.toggle("flagged", newStatus === "flagged");
+      li.classList.remove("done", "hidden-done");
+      flagBtn.classList.toggle("active", newStatus === "flagged");
+      cb.checked = false;
+      li.dataset.status = newStatus || "";
+      // Flagged collapses the row but keeps it visible.
+      if (newStatus === "flagged") setOpen(false);
+      updateCheckSummary(sn);
+    });
+
     li.appendChild(cb);
+    li.appendChild(flagBtn);
     li.appendChild(label);
     li.appendChild(expandBtn);
     li.appendChild(detail);
     siteNotesChecklist.appendChild(li);
   }
-  updateCheckSummary(sn, doneCount);
+  updateCheckSummary(sn, doneCount, flagCount);
 }
 
-function updateCheckSummary(sn, doneCount) {
+function updateCheckSummary(sn, doneCount, flagCount) {
   const summary = document.getElementById("siteNotesCheckSummary");
   if (!summary) return;
-  const ticks = sn.ticks || {};
-  const total = (sn.checklist || []).length;
-  const done =
-    typeof doneCount === "number"
-      ? doneCount
-      : Object.keys(ticks).filter((k) => ticks[k]).length;
-  summary.textContent = `${done}/${total} done`;
+  const items = sn.checklist || [];
+  let done = 0;
+  let flagged = 0;
+  for (const it of items) {
+    const s = getItemStatus(sn, it.id);
+    if (s === "done") done++;
+    else if (s === "flagged") flagged++;
+  }
+  if (typeof doneCount === "number") done = doneCount;
+  if (typeof flagCount === "number") flagged = flagCount;
+  const total = items.length;
+  summary.textContent =
+    `${done}/${total} done` + (flagged ? ` · ${flagged} flagged` : "");
 }
 
 function resolveItemTagNames(item) {
@@ -2827,26 +2882,33 @@ $("#siteNotesGenFeedback")?.addEventListener("click", async () => {
 });
 
 async function generateStudentFeedback(sn) {
-  const ticks = sn.ticks || {};
-  const outstanding = (sn.checklist || []).filter((it) => !ticks[it.id]);
-  const resolved = (sn.checklist || []).filter((it) => ticks[it.id]);
-  if (!outstanding.length) {
-    return "Hi,\n\nThanks — everything looks in order from my review. No changes needed.\n\nThanks!";
+  const flagged = (sn.checklist || []).filter(
+    (it) => getItemStatus(sn, it.id) === "flagged"
+  );
+  if (!flagged.length) {
+    return "Hi,\n\nThanks — nothing flagged in my review, the assessment looks in order.\n\nThanks!";
   }
+  // Strip evidenceTags so the prompt doesn't surface internal tag names.
+  const flaggedForPrompt = flagged.map((it) => ({
+    label: it.label,
+    severity: it.severity,
+  }));
   const SYSTEM = [
     "You are an EPC trainer giving feedback to a UK SAP/RdSAP trainee about",
     "their site notes and photo evidence. Write a warm, plain-English message",
     "the assessor can paste verbatim. Bulleted, ordered most important first.",
-    "Reference photo evidence and RdSAP conventions where relevant.",
-    "Only mention items in the OUTSTANDING list — do not include items the",
-    "assessor has already ticked off.",
+    "Reference RdSAP conventions where relevant.",
+    "Only address the FLAGGED items below — these are what the assessor wants",
+    "the trainee to fix. Speak in plain language about photos and evidence;",
+    "do NOT reference any internal tag names, category names, side-panel",
+    "structure, or that an automated tool was used. The trainee should not",
+    "see any technical scaffolding.",
     "End with a friendly sign-off such as 'Thanks!'.",
   ].join("\n");
   const body = JSON.stringify(
     {
       extracted: sn.extracted || {},
-      outstanding,
-      resolved: resolved.map((r) => r.label),
+      flagged: flaggedForPrompt,
     },
     null,
     2
@@ -2867,7 +2929,8 @@ async function generateStudentFeedback(sn) {
         {
           role: "user",
           content:
-            "Draft the student feedback message based on the outstanding items below.\n\n" +
+            "Draft the trainee feedback message addressing the flagged items below. " +
+            "Use only plain English — no internal tag or category names.\n\n" +
             body,
         },
       ],
@@ -2980,7 +3043,9 @@ async function runSiteNotesImport(url) {
     siteNotesImportBtn.textContent = "Fetching PDF…";
   }
   const setProgress = (msg) => {
-    siteNotesStatus.textContent = msg;
+    // Show progress on the button only — the small status label was a noisy
+    // duplicate.
+    siteNotesStatus.textContent = "";
     if (siteNotesImportBtn) siteNotesImportBtn.textContent = msg;
   };
   const finish = () => {
@@ -3326,13 +3391,24 @@ async function callClaudeForSiteNotes(text, previous) {
     "- Roof rooms = yes: confirm Type 1 / Type 2 / detailed method; for Type 1/2 confirm loft access limitation",
     "- No loft access selected without photo proving no hatch",
     "- Flat roof or sloping ceiling marked 'Unknown' (RdSAP convention is As Built)",
-    "- Doors — draft-proofing photo if not double-glazed",
+    "- Doors — draft-proofing photo if not double-glazed. " +
+      "Doors should ONLY be marked 'insulated' when paper evidence (e.g. " +
+      "manufacturer spec, build date) supports it. Do NOT flag a non-insulated " +
+      "but draught-proofed door as missing insulation — that's expected. Only " +
+      "flag if a non-double-glazed door has no draught-proofing photo or other " +
+      "evidence.",
     "- Primary heating data source: if photo shows model/serial/GC tag then PCDF should be used; flag if Manual",
     "- Storage / panel heaters may be Manual — that's expected",
     "- Heating controls — confirm photos cover every control selected",
-    "- Central heating pump age: should be Unknown if no photo; pre-2012 if no EEI; 2013+ if EEI on pump",
+    "- Central heating pump age: should be Unknown if no photo; pre-2012 if no EEI; 2013+ if EEI on pump. " +
+      "If the primary heating system is a combi boiler, Central Heating Pump Age should be recorded as Unknown.",
     "- Secondary heating verification (refer to https://support.energy-trust.co.uk/article/understanding-secondary-heating)",
-    "- Water heating: immersion single vs dual photo evidence",
+    "- Water heating: immersion single vs dual photo evidence. " +
+      "If the primary heating system is a combi boiler, the correct RdSAP " +
+      "selection is 'Regular' water heating type with source 'From Main " +
+      "Heating 1' and No Cylinder. Do NOT phrase it as 'from main heating " +
+      "system via the combi option'. If the site notes show a combi boiler " +
+      "with a cylinder recorded, flag must.",
     "- Cylinder thermostat photo if 'Yes' selected",
     "- Cylinder insulation thickness measurement photo if cylinder is present",
     "- If the site notes mention a shower (electric / instantaneous mains-pressure / mixer) or any bath, ensure a Shower / Bath photo is filed; flag must when the site notes record a shower or bath but no photo evidence is present.",

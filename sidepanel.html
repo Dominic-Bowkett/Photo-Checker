@@ -48,9 +48,6 @@
         multiple
         hidden
       />
-      <button id="importBtn" title="Import photos from a URL, PDF or Word doc">
-        Import
-      </button>
       <button id="addCategory" title="Add a custom tag">+ Tag</button>
     </div>
 
@@ -132,9 +129,9 @@
           <ul id="siteNotesChecklist"></ul>
           <h3 class="snh">Student feedback</h3>
           <p class="settings-hint" id="siteNotesFeedbackHint">
-            Once you've ticked off the checks you're happy with, click
-            <strong>Generate feedback</strong> to draft a message covering
-            only what's still outstanding.
+            Tick the checks you're happy with and ⚑ flag anything the
+            trainee needs to fix. Click <strong>Generate feedback</strong>
+            to draft a message that covers only the flagged items.
           </p>
           <textarea id="siteNotesFeedback" rows="8" placeholder="No feedback drafted yet."></textarea>
           <div class="site-notes-actions">
@@ -153,6 +150,9 @@
       <header>
         <h2>All photos <span id="allPhotosCount">0</span></h2>
         <div class="pinned-actions">
+          <button id="importBtn" title="Import photos from a URL, PDF or Word doc">
+            Import
+          </button>
           <button id="allPhotosReview" title="Open every photo in the lightbox to review tags">
             Review
           </button>
