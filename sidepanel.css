@@ -924,13 +924,20 @@ main {
   cursor: not-allowed;
 }
 
-#allPhotosPinned #importBtn {
+#allPhotosPinned #importBtn,
+#allPhotosPinned #allPhotosTabImport {
   background: #fff;
-  border-color: var(--charcoal);
+  border: 1px solid var(--charcoal);
   color: var(--charcoal);
+  border-radius: 6px;
+  padding: 3px 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
 }
 
-#allPhotosPinned #importBtn:hover {
+#allPhotosPinned #importBtn:hover,
+#allPhotosPinned #allPhotosTabImport:hover {
   background: var(--yellow);
   border-color: var(--yellow);
   color: var(--black);

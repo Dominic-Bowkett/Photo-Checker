@@ -2562,6 +2562,8 @@ function renderSiteNotesPinned() {
   if (!siteNotesPinned) return;
   siteNotesPinned.hidden = false;
   siteNotesImportBtn.hidden = !settings?.claudeApiKey;
+  const tabBtn = document.getElementById("siteNotesTabImport");
+  if (tabBtn) tabBtn.hidden = !settings?.claudeApiKey;
   const bucket = getBucket();
   const sn = bucket.siteNotes;
   const history = bucket.siteNotesHistory || [];
@@ -3113,6 +3115,82 @@ $("#importUseCurrentTab")?.addEventListener("click", () =>
     /\.(pdf|docx|jpe?g|png|gif|webp|bmp)(?:[?#]|$)/i.test(u) || /image|pdf|word/i.test(u)
   )
 );
+
+async function getActiveTabUrl(opts = {}) {
+  let tab;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch (_) {
+    showToast("Could not read the active tab.", { kind: "error" });
+    return null;
+  }
+  if (!tab?.url) {
+    showToast("Active tab has no URL.", { kind: "error" });
+    return null;
+  }
+  if (!/^https?:/i.test(tab.url)) {
+    showToast(
+      `Active tab URL is not http(s) (got ${tab.url.slice(0, 40)}…).`,
+      { kind: "error" }
+    );
+    return null;
+  }
+  if (opts.predicate && !opts.predicate(tab.url)) {
+    if (
+      !confirm(
+        `The active tab URL doesn't look like the expected file:\n\n${tab.url}\n\nContinue?`
+      )
+    ) {
+      return null;
+    }
+  }
+  return tab.url;
+}
+
+// All photos card → "From tab" — fetch the active tab's URL straight away.
+$("#allPhotosTabImport")?.addEventListener("click", async () => {
+  const url = await getActiveTabUrl({
+    predicate: (u) =>
+      /\.(pdf|docx|jpe?g|png|gif|webp|bmp)(?:[?#]|$)/i.test(u) ||
+      /image|pdf|word/i.test(u),
+  });
+  if (!url) return;
+  importStatusEl.textContent = "";
+  showToast(`Importing from current tab…`, { ttl: 2000 });
+  try {
+    const photos = await importFromUrl(url);
+    if (!photos.length) {
+      showToast("No images found at that URL.", { kind: "error" });
+      return;
+    }
+    showDetected([...(detected || []), ...photos]);
+    showToast(
+      `Added ${photos.length} photo${photos.length === 1 ? "" : "s"} from current tab.`,
+      { kind: "success" }
+    );
+  } catch (err) {
+    console.error("Tab import failed", err);
+    showToast(`Tab import failed: ${err?.message || err}`, {
+      kind: "error",
+      ttl: 8000,
+    });
+  }
+});
+
+// Site notes card → "From tab" — fetch and run the site notes import.
+$("#siteNotesTabImport")?.addEventListener("click", async () => {
+  if (!settings.claudeApiKey) {
+    showToast("Set your Claude API key in Settings first (gear icon).", {
+      kind: "error",
+    });
+    return;
+  }
+  const url = await getActiveTabUrl({
+    predicate: (u) => /\.pdf(?:[?#]|$)/i.test(u) || /pdf/i.test(u),
+  });
+  if (!url) return;
+  await runSiteNotesImport(url);
+});
 
 $("#siteNotesGo")?.addEventListener("click", async () => {
   const url = siteNotesUrlEl.value.trim();
