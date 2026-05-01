@@ -3416,8 +3416,19 @@ async function callClaudeForSiteNotes(text, previous) {
     "- Primary heating data source: if photo shows model/serial/GC tag then PCDF should be used; flag if Manual",
     "- Storage / panel heaters may be Manual — that's expected",
     "- Heating controls — confirm photos cover every control selected",
-    "- Central heating pump age: should be Unknown if no photo; pre-2012 if no EEI; 2013+ if EEI on pump. " +
-      "If the primary heating system is a combi boiler, Central Heating Pump Age should be recorded as Unknown.",
+    "- Central heating pump age: " +
+      "if NO photo of the pump exists (or no pump is visible), the correct " +
+      "value is 'Unknown'. If a pump IS visible in a photo and there is no " +
+      "Energy Efficiency Index (EEI) label on it, the correct value is " +
+      "pre-2012. If a pump is visible and has an EEI label, the correct " +
+      "value is 2013+. " +
+      "Do NOT instruct the trainee that 'Unknown is correct when no EEI " +
+      "label is confirmed' — Unknown is only correct when there is no pump " +
+      "photo at all. If a pump photo is provided but currently recorded as " +
+      "Unknown, flag must so the trainee picks pre-2012 or 2013+ based on " +
+      "whether an EEI label is visible. " +
+      "If the primary heating system is a combi boiler, Central Heating Pump " +
+      "Age should be recorded as Unknown.",
     "- Secondary heating verification (refer to https://support.energy-trust.co.uk/article/understanding-secondary-heating)",
     "- Water heating: immersion single vs dual photo evidence. " +
       "If the primary heating system is a combi boiler, the correct RdSAP " +
