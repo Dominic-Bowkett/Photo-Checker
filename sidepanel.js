@@ -2926,7 +2926,16 @@ async function generateStudentFeedback(sn) {
   const flagged = (sn.checklist || []).filter(
     (it) => getItemStatus(sn, it.id) === "flagged"
   );
+  const practical = getCurrentPractical();
   if (!flagged.length) {
+    if (practical) {
+      return (
+        "All entries match the master answer key — you have met the criteria " +
+        "and successfully completed " +
+        practical.label +
+        ".\n\nThanks!"
+      );
+    }
     return "Nothing flagged in my review — the assessment looks in order.\n\nThanks!";
   }
   // Strip evidenceTags so the prompt doesn't surface internal tag names.
@@ -2972,7 +2981,10 @@ async function generateStudentFeedback(sn) {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: settings.claudeModel || "claude-sonnet-4-6",
+      // Use Haiku for practical-mode feedback drafting (fast text task).
+      model: practical
+        ? "claude-haiku-4-5-20251001"
+        : settings.claudeModel || "claude-sonnet-4-6",
       max_tokens: 1500,
       system: SYSTEM,
       messages: [
@@ -3550,7 +3562,11 @@ async function callClaudeForSiteNotes(text, previous) {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: settings.claudeModel || "claude-sonnet-4-6",
+      // Practical assessments are pure text comparison — Haiku is much
+      // faster and cheaper, and accurate enough for the structured diff.
+      model: getCurrentPractical()
+        ? "claude-haiku-4-5-20251001"
+        : settings.claudeModel || "claude-sonnet-4-6",
       max_tokens: 8000,
       system: SYSTEM,
       messages: [
