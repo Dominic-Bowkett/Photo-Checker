@@ -231,6 +231,9 @@
             autocomplete="off"
             spellcheck="false"
           />
+          <div class="import-row">
+            <button id="siteNotesUseCurrentTab" title="Fill the URL from the current browser tab">Use current tab</button>
+          </div>
           <p class="settings-hint">
             The PDF is fetched, parsed locally, then sent to Claude for
             extraction and rule checks. Existing site notes for this
@@ -275,6 +278,7 @@
           />
           <div class="import-row">
             <button id="importUrlGo" class="primary">Fetch URL</button>
+            <button id="importUseCurrentTab" title="Fill the URL from the current browser tab">Use current tab</button>
             <span id="importStatus" class="import-status"></span>
           </div>
 

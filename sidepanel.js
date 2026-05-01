@@ -3069,6 +3069,51 @@ siteNotesUrlEl?.addEventListener("keydown", (e) => {
   }
 });
 
+async function fillFieldFromActiveTab(input, predicate) {
+  let tab;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch (_) {
+    showToast("Could not read the active tab.", { kind: "error" });
+    return;
+  }
+  if (!tab?.url) {
+    showToast("Active tab has no URL.", { kind: "error" });
+    return;
+  }
+  if (!/^https?:/i.test(tab.url)) {
+    showToast(
+      `Active tab URL is not http(s) (got ${tab.url.slice(0, 40)}…). Open the file in a normal tab and try again.`,
+      { kind: "error" }
+    );
+    return;
+  }
+  if (predicate && !predicate(tab.url)) {
+    if (
+      !confirm(
+        `The active tab URL doesn't look like the expected file type:\n\n${tab.url}\n\nUse it anyway?`
+      )
+    ) {
+      return;
+    }
+  }
+  input.value = tab.url;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.focus();
+}
+
+$("#siteNotesUseCurrentTab")?.addEventListener("click", () =>
+  fillFieldFromActiveTab(siteNotesUrlEl, (u) =>
+    /\.pdf(?:[?#]|$)/i.test(u) || /pdf/i.test(u)
+  )
+);
+
+$("#importUseCurrentTab")?.addEventListener("click", () =>
+  fillFieldFromActiveTab(importUrlEl, (u) =>
+    /\.(pdf|docx|jpe?g|png|gif|webp|bmp)(?:[?#]|$)/i.test(u) || /image|pdf|word/i.test(u)
+  )
+);
+
 $("#siteNotesGo")?.addEventListener("click", async () => {
   const url = siteNotesUrlEl.value.trim();
   if (!url) return;
