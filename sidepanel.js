@@ -3269,15 +3269,32 @@ async function buildSiteNotesUserContent({
       text:
         "PRACTICAL ASSESSMENT MODE — " +
         practical.label +
-        "\n\nThis trainee is taking a practical exam. Do NOT request photos. " +
-        "The MASTER answer key for the property follows. Compare the " +
-        "trainee's site notes against this master and flag any field where " +
-        "the trainee's value differs from the master, calling out the " +
-        "expected vs. recorded value in the checklist label. Tolerance " +
-        "guidance: dimensions within ±0.05 m of master are fine; wall " +
-        "thickness within ±100 mm is fine; counts (rooms, lights, fans) " +
-        "must match exactly. Use the same checklist format as normal " +
-        "(must|should|info severity, evidenceTags can be empty).\n\n" +
+        "\n\nThis trainee is taking a practical exam graded purely on whether " +
+        "their submission matches the master answer key.\n" +
+        "RULES:\n" +
+        "1. Compare the trainee's site notes ONLY against the master JSON. " +
+        "Produce a checklist item ONLY when a value differs from the master. " +
+        "If a field matches (within tolerance), do NOT include it.\n" +
+        "2. NEVER ask the trainee to provide photos, a floorplan, or any " +
+        "additional evidence. Photos and floorplan checks are out of scope " +
+        "for this mode. Do not suggest 'review the photos', 'verify with a " +
+        "photo', etc.\n" +
+        "3. IGNORE these meta fields entirely — do not compare or flag them, " +
+        "even if they differ: assessment.reference, assessment.inspectionDate, " +
+        "assessment.reportCreatedDate, reportCreatedDate, inspectionDate, " +
+        "reference. The trainee's own dates and reference are expected to " +
+        "differ.\n" +
+        "4. Each checklist label should describe the discrepancy in the " +
+        "form 'Field X: trainee recorded <value>, expected <master value>'. " +
+        "Severity must when the field affects RdSAP outputs, should for " +
+        "minor mismatches, info for harmless deviations.\n" +
+        "5. evidenceTags MUST be an empty array in this mode.\n" +
+        "TOLERANCES:\n" +
+        " - dimensions (lengths, heights, widths) within ±0.05 m of master " +
+        "are a match\n" +
+        " - wall thickness within ±100 mm of master is a match\n" +
+        " - counts (rooms, lights, fans, openings) must match exactly\n" +
+        " - text fields (e.g. construction type) must match exactly\n\n" +
         "MASTER JSON:\n" +
         JSON.stringify(practical.master, null, 2),
     });
