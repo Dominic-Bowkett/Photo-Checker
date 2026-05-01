@@ -2552,12 +2552,30 @@ function renderSiteNotesPinned() {
   }
 
   // Checklist
+  const showDoneEl = document.getElementById("siteNotesShowDone");
+  if (showDoneEl) showDoneEl.checked = !!sn.uiShowCompleted;
+  renderChecklistItems(sn);
+  if (document.activeElement !== siteNotesFeedback) {
+    siteNotesFeedback.value = sn.studentFeedback || "";
+  }
+}
+
+function renderChecklistItems(sn) {
   siteNotesChecklist.innerHTML = "";
   const ticks = sn.ticks || {};
-  for (const item of sn.checklist || []) {
+  const showDone = !!sn.uiShowCompleted;
+  const items = sn.checklist || [];
+  let doneCount = 0;
+  for (const item of items) {
+    if (ticks[item.id]) doneCount++;
     const li = document.createElement("li");
     li.dataset.severity = item.severity || "info";
-    if (ticks[item.id]) li.classList.add("done");
+    li.dataset.id = item.id;
+    if (ticks[item.id]) {
+      li.classList.add("done");
+      if (!showDone) li.classList.add("hidden-done");
+    }
+
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = !!ticks[item.id];
@@ -2565,17 +2583,109 @@ function renderSiteNotesPinned() {
       sn.ticks = sn.ticks || {};
       sn.ticks[item.id] = cb.checked;
       li.classList.toggle("done", cb.checked);
+      if (!sn.uiShowCompleted) {
+        li.classList.toggle("hidden-done", cb.checked);
+      }
+      updateCheckSummary(sn);
       await save();
     });
+
     const label = document.createElement("div");
     label.className = "label";
     label.textContent = item.label;
+
+    const expandBtn = document.createElement("button");
+    expandBtn.className = "expand-toggle";
+    expandBtn.type = "button";
+    expandBtn.textContent = "▸";
+    expandBtn.title = "Show linked photos";
+
+    const detail = document.createElement("div");
+    detail.className = "item-detail";
+    detail.hidden = true;
+
+    expandBtn.addEventListener("click", () => {
+      const isOpen = !detail.hidden;
+      detail.hidden = isOpen;
+      expandBtn.textContent = isOpen ? "▸" : "▾";
+      if (!isOpen) buildChecklistDetail(detail, item);
+    });
+
     li.appendChild(cb);
     li.appendChild(label);
+    li.appendChild(expandBtn);
+    li.appendChild(detail);
     siteNotesChecklist.appendChild(li);
   }
-  if (document.activeElement !== siteNotesFeedback) {
-    siteNotesFeedback.value = sn.studentFeedback || "";
+  updateCheckSummary(sn, doneCount);
+}
+
+function updateCheckSummary(sn, doneCount) {
+  const summary = document.getElementById("siteNotesCheckSummary");
+  if (!summary) return;
+  const ticks = sn.ticks || {};
+  const total = (sn.checklist || []).length;
+  const done =
+    typeof doneCount === "number"
+      ? doneCount
+      : Object.keys(ticks).filter((k) => ticks[k]).length;
+  summary.textContent = `${done}/${total} done`;
+}
+
+function buildChecklistDetail(node, item) {
+  node.innerHTML = "";
+  const cats = getBucket().categories;
+  const tagNames = (item.evidenceTags || []).filter(Boolean);
+  // Try to derive evidence tags from the label if Claude didn't supply any.
+  if (!tagNames.length) {
+    for (const cat of cats) {
+      if ((item.label || "").toLowerCase().includes(cat.title.toLowerCase())) {
+        tagNames.push(cat.title);
+      }
+    }
+  }
+  if (!tagNames.length) {
+    node.classList.add("empty");
+    node.textContent = "No linked tags. Cross-reference manually.";
+    return;
+  }
+  node.classList.remove("empty");
+  const chips = document.createElement("div");
+  chips.className = "item-tags";
+  for (const tag of tagNames) {
+    const chip = document.createElement("span");
+    chip.className = "tag-chip";
+    chip.textContent = tag;
+    chips.appendChild(chip);
+  }
+  node.appendChild(chips);
+  const thumbs = document.createElement("div");
+  thumbs.className = "tag-thumbs";
+  let any = false;
+  for (const tagName of tagNames) {
+    const cat = cats.find(
+      (c) => c.title.toLowerCase() === tagName.toLowerCase()
+    );
+    if (!cat) continue;
+    cat.photos.forEach((photo, idx) => {
+      const img = document.createElement("img");
+      img.src = photo.dataUrl || photo.url;
+      img.alt = photo.alt || "";
+      img.title = `${cat.title}`;
+      img.addEventListener("click", () => openLightbox(cat.photos, idx));
+      thumbs.appendChild(img);
+      any = true;
+    });
+  }
+  if (!any) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.style.fontSize = "11px";
+    empty.style.color = "var(--muted)";
+    empty.textContent = "No photos filed yet under the linked tags.";
+    node.appendChild(empty);
+  } else {
+    node.appendChild(thumbs);
   }
 }
 
@@ -2646,6 +2756,102 @@ siteNotesFeedback?.addEventListener("input", () => {
   if (siteNotesFeedbackTimer) clearTimeout(siteNotesFeedbackTimer);
   siteNotesFeedbackTimer = setTimeout(() => save(), 400);
 });
+
+$("#siteNotesShowDone")?.addEventListener("change", async (e) => {
+  const sn = getBucket().siteNotes;
+  if (!sn) return;
+  sn.uiShowCompleted = !!e.target.checked;
+  await save();
+  renderChecklistItems(sn);
+});
+
+$("#siteNotesGenFeedback")?.addEventListener("click", async () => {
+  const sn = getBucket().siteNotes;
+  if (!sn) return;
+  if (!settings.claudeApiKey) {
+    showToast("Set your Claude API key in Settings first (gear icon).", {
+      kind: "error",
+    });
+    return;
+  }
+  const btn = $("#siteNotesGenFeedback");
+  const wasLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Drafting…";
+  try {
+    const text = await generateStudentFeedback(sn);
+    sn.studentFeedback = text;
+    siteNotesFeedback.value = text;
+    await save();
+    showToast("Student feedback drafted.", { kind: "success" });
+  } catch (err) {
+    console.error("Generate feedback failed", err);
+    showToast("Generate feedback failed: " + (err?.message || err), {
+      kind: "error",
+      ttl: 8000,
+    });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = wasLabel;
+  }
+});
+
+async function generateStudentFeedback(sn) {
+  const ticks = sn.ticks || {};
+  const outstanding = (sn.checklist || []).filter((it) => !ticks[it.id]);
+  const resolved = (sn.checklist || []).filter((it) => ticks[it.id]);
+  if (!outstanding.length) {
+    return "Hi,\n\nThanks — everything looks in order from my review. No changes needed.\n\nThanks!";
+  }
+  const SYSTEM = [
+    "You are an EPC trainer giving feedback to a UK SAP/RdSAP trainee about",
+    "their site notes and photo evidence. Write a warm, plain-English message",
+    "the assessor can paste verbatim. Bulleted, ordered most important first.",
+    "Reference photo evidence and RdSAP conventions where relevant.",
+    "Only mention items in the OUTSTANDING list — do not include items the",
+    "assessor has already ticked off.",
+    "End with a friendly sign-off such as 'Thanks!'.",
+  ].join("\n");
+  const body = JSON.stringify(
+    {
+      extracted: sn.extracted || {},
+      outstanding,
+      resolved: resolved.map((r) => r.label),
+    },
+    null,
+    2
+  );
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": settings.claudeApiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: settings.claudeModel || "claude-sonnet-4-6",
+      max_tokens: 1500,
+      system: SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content:
+            "Draft the student feedback message based on the outstanding items below.\n\n" +
+            body,
+        },
+      ],
+    }),
+  });
+  if (!resp.ok) {
+    const errText = await resp.text();
+    const err = new Error(`HTTP ${resp.status}: ${errText.slice(0, 300)}`);
+    err.status = resp.status;
+    throw err;
+  }
+  const data = await resp.json();
+  return (data?.content?.[0]?.text || "").trim();
+}
 
 $("#siteNotesCopy")?.addEventListener("click", async () => {
   const text = siteNotesFeedback.value;
@@ -2723,6 +2929,21 @@ async function runSiteNotesImport(url) {
     showToast("Set your Claude API key in Settings first (gear icon).", { kind: "error" });
     return;
   }
+  // Pre-flight: warn if there are no photos in the bucket yet — the checklist
+  // can't link to evidence that isn't filed.
+  const totalPhotos = getBucket().categories.reduce(
+    (n, c) => n + (c.photos?.length || 0),
+    0
+  );
+  if (totalPhotos === 0) {
+    if (
+      !confirm(
+        "No photos are filed in this assessment yet. The site notes check works best when the photo evidence is already tagged so the checklist can link to specific photos.\n\nProceed anyway?"
+      )
+    ) {
+      return;
+    }
+  }
   const wasLabel = siteNotesImportBtn?.textContent;
   if (siteNotesImportBtn) {
     siteNotesImportBtn.disabled = true;
@@ -2795,9 +3016,11 @@ async function runSiteNotesImport(url) {
     importedAt: Date.now(),
     extracted: result.extracted || {},
     checklist: result.checklist || [],
-    studentFeedback: result.studentFeedback || "",
+    studentFeedback: "",
     changesSinceLast: result.changesSinceLast || "",
     ticks: previous?.url === url ? previous.ticks || {} : {},
+    uiShowCompleted:
+      previous?.url === url ? previous.uiShowCompleted || false : false,
   };
   await save();
   render();
@@ -2904,7 +3127,13 @@ async function callClaudeForSiteNotes(text, previous) {
     "of available photo evidence tags in the side panel.",
     "",
     "Return ONLY a JSON object with this exact shape:",
-    '{ "extracted": {...}, "checklist": [{"id": "kebab-id", "label": "...", "severity": "must|should|info"}], "studentFeedback": "...", "changesSinceLast": "..." }',
+    '{ "extracted": {...}, "checklist": [{"id": "kebab-id", "label": "...", "severity": "must|should|info", "evidenceTags": ["Tag Name"]}], "changesSinceLast": "..." }',
+    "Each checklist item MUST include `evidenceTags`: a list of tag names",
+    "from the side panel that an assessor would look at to verify this item",
+    "(use the EXACT tag names from the supplied list). Empty array if no",
+    "single tag clearly applies.",
+    "DO NOT include a studentFeedback field — that is generated separately",
+    "after the assessor has reviewed the checklist.",
     "If a previous version is supplied, populate `changesSinceLast` with a",
     "concise summary of what the student changed (or didn't change) compared",
     "to it, focused on whether queries from the previous round were addressed.",
@@ -3039,6 +3268,9 @@ async function callClaudeForSiteNotes(text, previous) {
     );
   }
   // Normalise checklist items so each has an id.
+  const knownTags = new Set(
+    getBucket().categories.map((c) => c.title.toLowerCase())
+  );
   parsed.checklist = (parsed.checklist || []).map((it, i) => ({
     id:
       it.id ||
@@ -3051,6 +3283,9 @@ async function callClaudeForSiteNotes(text, previous) {
     severity: ["must", "should", "info"].includes(it.severity)
       ? it.severity
       : "info",
+    evidenceTags: Array.isArray(it.evidenceTags)
+      ? it.evidenceTags.filter((t) => knownTags.has(String(t).toLowerCase()))
+      : [],
   }));
   return parsed;
 }

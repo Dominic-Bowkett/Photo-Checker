@@ -119,11 +119,26 @@
             <summary>Extracted fields</summary>
             <pre id="siteNotesExtracted"></pre>
           </details>
-          <h3 class="snh">Assessor checks</h3>
+          <h3 class="snh">
+            Assessor checks
+            <span id="siteNotesCheckSummary" class="snh-meta"></span>
+          </h3>
+          <div class="checklist-controls">
+            <label>
+              <input id="siteNotesShowDone" type="checkbox" />
+              Show completed
+            </label>
+          </div>
           <ul id="siteNotesChecklist"></ul>
           <h3 class="snh">Student feedback</h3>
-          <textarea id="siteNotesFeedback" rows="8"></textarea>
+          <p class="settings-hint" id="siteNotesFeedbackHint">
+            Once you've ticked off the checks you're happy with, click
+            <strong>Generate feedback</strong> to draft a message covering
+            only what's still outstanding.
+          </p>
+          <textarea id="siteNotesFeedback" rows="8" placeholder="No feedback drafted yet."></textarea>
           <div class="site-notes-actions">
+            <button id="siteNotesGenFeedback" class="ai-action">✨ Generate feedback</button>
             <button id="siteNotesCopy" class="primary">Copy feedback</button>
           </div>
           <details class="site-notes-history" id="siteNotesHistoryWrap" hidden>
