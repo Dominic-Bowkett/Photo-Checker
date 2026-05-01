@@ -2594,22 +2594,26 @@ function renderChecklistItems(sn) {
     label.className = "label";
     label.textContent = item.label;
 
+    // Expand-toggle + photo strip. Auto-opened when there are linked photos
+    // so the assessor sees the evidence without having to click each row.
     const expandBtn = document.createElement("button");
     expandBtn.className = "expand-toggle";
     expandBtn.type = "button";
-    expandBtn.textContent = "▸";
-    expandBtn.title = "Show linked photos";
+    expandBtn.title = "Show / hide linked photos";
 
     const detail = document.createElement("div");
     detail.className = "item-detail";
-    detail.hidden = true;
 
-    expandBtn.addEventListener("click", () => {
-      const isOpen = !detail.hidden;
-      detail.hidden = isOpen;
-      expandBtn.textContent = isOpen ? "▸" : "▾";
-      if (!isOpen) buildChecklistDetail(detail, item);
-    });
+    const linkedPhotoCount = countLinkedPhotos(item);
+    const startOpen = linkedPhotoCount > 0 && !ticks[item.id];
+
+    const setOpen = (open) => {
+      detail.hidden = !open;
+      expandBtn.textContent = open ? "▾" : "▸";
+      if (open) buildChecklistDetail(detail, item);
+    };
+    setOpen(startOpen);
+    expandBtn.addEventListener("click", () => setOpen(detail.hidden));
 
     li.appendChild(cb);
     li.appendChild(label);
@@ -2630,6 +2634,32 @@ function updateCheckSummary(sn, doneCount) {
       ? doneCount
       : Object.keys(ticks).filter((k) => ticks[k]).length;
   summary.textContent = `${done}/${total} done`;
+}
+
+function resolveItemTagNames(item) {
+  const cats = getBucket().categories;
+  const tagNames = (item.evidenceTags || []).filter(Boolean);
+  if (!tagNames.length) {
+    for (const cat of cats) {
+      if ((item.label || "").toLowerCase().includes(cat.title.toLowerCase())) {
+        tagNames.push(cat.title);
+      }
+    }
+  }
+  return tagNames;
+}
+
+function countLinkedPhotos(item) {
+  const cats = getBucket().categories;
+  const tagNames = resolveItemTagNames(item);
+  let count = 0;
+  for (const tagName of tagNames) {
+    const cat = cats.find(
+      (c) => c.title.toLowerCase() === tagName.toLowerCase()
+    );
+    if (cat) count += cat.photos.length;
+  }
+  return count;
 }
 
 function buildChecklistDetail(node, item) {
@@ -3109,6 +3139,101 @@ function mergePhotoFlags(checklist, photoSummary) {
   });
 }
 
+async function buildSiteNotesUserContent({
+  text,
+  previousExtracted,
+  previousFeedback,
+}) {
+  const out = [];
+  if (previousExtracted) {
+    out.push({
+      type: "text",
+      text:
+        "Previous version's extracted JSON:\n" +
+        String(previousExtracted).slice(0, 8000) +
+        "\n\nPrevious feedback that was sent to the student:\n" +
+        String(previousFeedback || "(none)").slice(0, 4000),
+    });
+  }
+  out.push({
+    type: "text",
+    text:
+      "Current site notes PDF text follows. Extract and check.\n\n" +
+      String(text || "").slice(0, 60000),
+  });
+
+  // Attach photos so Claude can cross-reference what's actually been filed.
+  // Capped to avoid an excessive payload — most assessments fit easily.
+  const ALLOWED = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+  ]);
+  const cats = getBucket().categories;
+  const tagFor = (photo) => {
+    const id = photoIdentity(photo);
+    return cats
+      .filter((c) => c.photos.some((p) => photoIdentity(p) === id))
+      .map((c) => c.title);
+  };
+  const seen = new Set();
+  const queue = [];
+  for (const cat of cats) {
+    for (const p of cat.photos) {
+      const id = photoIdentity(p);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      queue.push(p);
+    }
+  }
+  const MAX_PHOTOS = 40;
+  if (queue.length > MAX_PHOTOS) queue.length = MAX_PHOTOS;
+  let attached = 0;
+  if (queue.length) {
+    out.push({
+      type: "text",
+      text: `Photos filed in the side panel follow (${queue.length} attached). Each is labelled with the tags it's filed under so you can match them to checklist items.`,
+    });
+  }
+  for (const photo of queue) {
+    let dataUrl = photo.dataUrl;
+    if (!dataUrl?.startsWith("data:")) continue;
+    const small = await downscaleDataUrl(dataUrl, 512, 0.7);
+    let m = String(small).match(/^data:(image\/[^;]+);base64,(.*)$/);
+    if (!m) continue;
+    let mediaType = m[1];
+    let base64 = m[2];
+    if (mediaType === "image/jpg") mediaType = "image/jpeg";
+    if (!ALLOWED.has(mediaType)) {
+      const png = await reencodeAsPng(small);
+      if (!png) continue;
+      mediaType = "image/png";
+      base64 = png;
+    }
+    const tags = tagFor(photo);
+    out.push({
+      type: "text",
+      text: `Photo — tags: ${tags.join(", ") || "(untagged)"}${
+        photo.pageTitle ? ` — ${String(photo.pageTitle).slice(0, 80)}` : ""
+      }`,
+    });
+    out.push({
+      type: "image",
+      source: { type: "base64", media_type: mediaType, data: base64 },
+    });
+    attached++;
+  }
+  console.debug(
+    "[EPC] site notes payload",
+    "photos attached =",
+    attached,
+    "of",
+    queue.length
+  );
+  return out;
+}
+
 async function callClaudeForSiteNotes(text, previous) {
   const tagList = getBucket().categories.map((c) => c.title);
   const photoSummary = summarisePhotosForChecks();
@@ -3170,7 +3295,10 @@ async function callClaudeForSiteNotes(text, previous) {
     "- Electric meter is dual / Economy 7 / 24 etc with no clear photo or paperwork evidence",
     "- Electric meter smart status mentioned but export capability not confirmed",
     "- Gas smart meter status missing",
-    "- Conservatory present but glazing percentage / perimeter not stated",
+    "- Conservatory present but glazing percentage / perimeter not stated. " +
+      "IMPORTANT: if the PDF contains a value under 'Record length of glazed " +
+      "perimeter' (or similar), treat the glazing extent as already recorded — " +
+      "do not flag it for that reason.",
     "- Wall insulation type is anything other than 'As Built' (must explain why)",
     "- Wall insulation 'Filled Cavity' selected with no drill-hole / paperwork evidence noted",
     "- Wall thickness measurements missing for main property or any extension",
@@ -3215,6 +3343,19 @@ async function callClaudeForSiteNotes(text, previous) {
     "",
     "Available photo tags in the side panel (count): " + photoSummaryText,
     "Use the EXACT tag names where applicable so the assessor can cross-reference.",
+    "",
+    "PHOTOS ARE ATTACHED to this conversation as image messages. Each photo",
+    "is preceded by a one-line label saying which side-panel tag(s) it lives",
+    "under. Use them as primary evidence when assessing each rule:",
+    " - If the rule asks for a photo and one of the relevant tag photos clearly",
+    "   shows the required item (e.g. cylinder thermostat, drill holes for cavity",
+    "   fill, EEI label on a pump), treat the evidence as PRESENT — do not flag.",
+    " - If the photos are missing or unclear, flag with severity must.",
+    " - If the rule cannot be assessed from the photos but the site notes",
+    "   answer it adequately, flag as info.",
+    " - Cross-check the photos against the claims in the site notes — if the",
+    "   site notes say one thing but a photo shows another, flag as must with",
+    "   a clear note of the discrepancy.",
   ].join("\n");
 
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -3232,16 +3373,11 @@ async function callClaudeForSiteNotes(text, previous) {
       messages: [
         {
           role: "user",
-          content:
-            (previousExtracted
-              ? "Previous version's extracted JSON:\n" +
-                previousExtracted.slice(0, 8000) +
-                "\n\nPrevious feedback that was sent to the student:\n" +
-                (previousFeedback || "(none)").slice(0, 4000) +
-                "\n\n"
-              : "") +
-            "Current site notes PDF text follows. Extract and check.\n\n" +
-            text.slice(0, 60000),
+          content: await buildSiteNotesUserContent({
+            text,
+            previousExtracted,
+            previousFeedback,
+          }),
         },
       ],
     }),
