@@ -84,6 +84,24 @@ function ensureDefaultTags(bucket) {
   return mutated;
 }
 
+function getPracticalMode(meta) {
+  const masters = (typeof window !== "undefined" && window.PRACTICAL_MASTERS) || {};
+  const haystack =
+    ((meta?.title || "") + " " + (meta?.pageTitle || ""))
+      .toLowerCase();
+  for (const key of Object.keys(masters)) {
+    const cfg = masters[key];
+    if (cfg?.titleMatch && cfg.titleMatch.test(haystack)) {
+      return { id: key, ...cfg };
+    }
+  }
+  return null;
+}
+
+function getCurrentPractical() {
+  return getPracticalMode(getBucket().meta);
+}
+
 function bucketLabel(bucket, key) {
   if (!bucket) return key;
   const m = bucket.meta || {};
@@ -357,9 +375,21 @@ if (chrome.tabs?.onUpdated) {
 
 function render() {
   rebuildAssessmentBar();
+  const practical = getCurrentPractical();
+  document.body.classList.toggle("practical-mode", !!practical);
   categoriesEl.innerHTML = "";
-  for (const cat of getBucket().categories) {
-    categoriesEl.appendChild(renderCategory(cat));
+  if (practical) {
+    const banner = document.createElement("div");
+    banner.className = "practical-banner";
+    banner.innerHTML =
+      `<strong>${escapeHtml(practical.label)}</strong><br>` +
+      `Photo evidence checks are disabled for this practical assessment. ` +
+      `The site notes import will compare the trainee's submission against the master answer key.`;
+    categoriesEl.appendChild(banner);
+  } else {
+    for (const cat of getBucket().categories) {
+      categoriesEl.appendChild(renderCategory(cat));
+    }
   }
   rebuildTagFilter();
   applyFilters();
@@ -422,6 +452,10 @@ function renderAllPhotosPinned() {
   const countEl = document.getElementById("allPhotosCount");
   const reviewBtn = document.getElementById("allPhotosReview");
   if (!section || !countEl || !reviewBtn) return;
+  if (getCurrentPractical()) {
+    section.hidden = true;
+    return;
+  }
   const all = collectAllUniquePhotos();
   countEl.textContent = String(all.length);
   reviewBtn.disabled = all.length === 0;
@@ -464,6 +498,10 @@ function renderFloorplanPinned() {
   const expand = document.getElementById("floorplanExpand");
   const checkBtn = document.getElementById("floorplanCheck");
   const cat = findFloorplanCategory();
+  if (getCurrentPractical()) {
+    section.hidden = true;
+    return;
+  }
   section.hidden = false;
   if (!cat || !cat.photos.length) {
     img.hidden = true;
@@ -3035,12 +3073,13 @@ async function runSiteNotesImport(url) {
     return;
   }
   // Pre-flight: warn if there are no photos in the bucket yet — the checklist
-  // can't link to evidence that isn't filed.
+  // can't link to evidence that isn't filed. Skipped for practical assessments
+  // since they don't use photo evidence.
   const totalPhotos = getBucket().categories.reduce(
     (n, c) => n + (c.photos?.length || 0),
     0
   );
-  if (totalPhotos === 0) {
+  if (totalPhotos === 0 && !getCurrentPractical()) {
     if (
       !confirm(
         "No photos are filed in this assessment yet. The site notes check works best when the photo evidence is already tagged so the checklist can link to specific photos.\n\nProceed anyway?"
@@ -3222,6 +3261,27 @@ async function buildSiteNotesUserContent({
   previousFeedback,
 }) {
   const out = [];
+  // Practical-assessment mode: send the master JSON instead of photos.
+  const practical = getCurrentPractical();
+  if (practical?.master) {
+    out.push({
+      type: "text",
+      text:
+        "PRACTICAL ASSESSMENT MODE — " +
+        practical.label +
+        "\n\nThis trainee is taking a practical exam. Do NOT request photos. " +
+        "The MASTER answer key for the property follows. Compare the " +
+        "trainee's site notes against this master and flag any field where " +
+        "the trainee's value differs from the master, calling out the " +
+        "expected vs. recorded value in the checklist label. Tolerance " +
+        "guidance: dimensions within ±0.05 m of master are fine; wall " +
+        "thickness within ±100 mm is fine; counts (rooms, lights, fans) " +
+        "must match exactly. Use the same checklist format as normal " +
+        "(must|should|info severity, evidenceTags can be empty).\n\n" +
+        "MASTER JSON:\n" +
+        JSON.stringify(practical.master, null, 2),
+    });
+  }
   if (previousExtracted) {
     out.push({
       type: "text",
@@ -3256,6 +3316,8 @@ async function buildSiteNotesUserContent({
   };
   const seen = new Set();
   const queue = [];
+  // Practical mode never attaches photos — master JSON drives the comparison.
+  if (practical) return out;
   for (const cat of cats) {
     for (const p of cat.photos) {
       const id = photoIdentity(p);

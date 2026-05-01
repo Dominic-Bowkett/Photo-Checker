@@ -29,6 +29,29 @@ body {
   height: 100%;
 }
 
+.practical-banner {
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  background: #fff7c2;
+  border: 1px solid var(--yellow);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--charcoal);
+}
+
+.practical-banner strong {
+  display: inline-block;
+  margin-bottom: 4px;
+  color: var(--black);
+  font-size: 13px;
+}
+
+body.practical-mode .filterbar,
+body.practical-mode #detected {
+  display: none !important;
+}
+
 .toast-stack {
   position: sticky;
   top: 0;
