@@ -3378,7 +3378,11 @@ async function callClaudeForSiteNotes(text, previous) {
       "do not flag it for that reason.",
     "- Wall insulation type is anything other than 'As Built' (must explain why)",
     "- Wall insulation 'Filled Cavity' selected with no drill-hole / paperwork evidence noted",
-    "- Wall thickness measurements missing for main property or any extension",
+    "- Wall thickness measurements missing for main property or any extension. " +
+      "If a wall thickness photo IS supplied and the measurement visible in the " +
+      "photo differs from the value recorded in the site notes, only flag if " +
+      "the difference is greater than 100 mm. Anything within ±100 mm is " +
+      "treated as a tolerance match.",
     "- Party wall 'Other' selected without photo evidence",
     "- Floor construction mentions basement (always flag for further investigation)",
     "- Floor is suspended timber but no sub-floor air vent or timber floor photo noted",
