@@ -2927,15 +2927,12 @@ async function generateStudentFeedback(sn) {
     (it) => getItemStatus(sn, it.id) === "flagged"
   );
   const practical = getCurrentPractical();
+  if (practical) {
+    // Practical mode: feedback is generated locally so it stays deterministic
+    // and free.
+    return generatePracticalFeedbackLocal(flagged, practical.label);
+  }
   if (!flagged.length) {
-    if (practical) {
-      return (
-        "All entries match the master answer key — you have met the criteria " +
-        "and successfully completed " +
-        practical.label +
-        ".\n\nThanks!"
-      );
-    }
     return "Nothing flagged in my review — the assessment looks in order.\n\nThanks!";
   }
   // Strip evidenceTags so the prompt doesn't surface internal tag names.
@@ -3281,33 +3278,25 @@ async function buildSiteNotesUserContent({
       text:
         "PRACTICAL ASSESSMENT MODE — " +
         practical.label +
-        "\n\nThis trainee is taking a practical exam graded purely on whether " +
-        "their submission matches the master answer key.\n" +
+        "\n\nThis trainee is taking a practical exam. Your ONLY job is to " +
+        "extract the trainee's recorded values from the site notes PDF text " +
+        "and return them in `extracted`, using the SAME shape and field " +
+        "names as the master JSON below so that a downstream tool can do " +
+        "the comparison.\n\n" +
         "RULES:\n" +
-        "1. Compare the trainee's site notes ONLY against the master JSON. " +
-        "Produce a checklist item ONLY when a value differs from the master. " +
-        "If a field matches (within tolerance), do NOT include it.\n" +
-        "2. NEVER ask the trainee to provide photos, a floorplan, or any " +
-        "additional evidence. Photos and floorplan checks are out of scope " +
-        "for this mode. Do not suggest 'review the photos', 'verify with a " +
-        "photo', etc.\n" +
-        "3. IGNORE these meta fields entirely — do not compare or flag them, " +
-        "even if they differ: assessment.reference, assessment.inspectionDate, " +
-        "assessment.reportCreatedDate, reportCreatedDate, inspectionDate, " +
-        "reference. The trainee's own dates and reference are expected to " +
-        "differ.\n" +
-        "4. Each checklist label should describe the discrepancy in the " +
-        "form 'Field X: trainee recorded <value>, expected <master value>'. " +
-        "Severity must when the field affects RdSAP outputs, should for " +
-        "minor mismatches, info for harmless deviations.\n" +
-        "5. evidenceTags MUST be an empty array in this mode.\n" +
-        "TOLERANCES:\n" +
-        " - dimensions (lengths, heights, widths) within ±0.05 m of master " +
-        "are a match\n" +
-        " - wall thickness within ±100 mm of master is a match\n" +
-        " - counts (rooms, lights, fans, openings) must match exactly\n" +
-        " - text fields (e.g. construction type) must match exactly\n\n" +
-        "MASTER JSON:\n" +
+        "1. Populate `extracted` with whatever you can read from the site " +
+        "notes, mirroring the master shape. If a field is genuinely absent " +
+        "from the site notes, leave it out (do not fabricate values).\n" +
+        "2. Set `checklist` to an empty array []. The diff is computed " +
+        "client-side; do not produce checklist items.\n" +
+        "3. Set `studentFeedback` to an empty string. Feedback is generated " +
+        "client-side too.\n" +
+        "4. `changesSinceLast` may still be populated if a previous version " +
+        "is supplied; otherwise empty string.\n" +
+        "5. Do NOT attach photos, floorplan checks, or any commentary — " +
+        "this is a pure extraction call.\n\n" +
+        "MASTER JSON (target shape — values are the correct answer key, " +
+        "you do NOT need to match them, only the field names):\n" +
         JSON.stringify(practical.master, null, 2),
     });
   }
@@ -3400,6 +3389,186 @@ async function buildSiteNotesUserContent({
     queue.length
   );
   return out;
+}
+
+// ---- Local practical-mode diff (no Claude needed) ------------------------
+const PRACTICAL_IGNORE_PATTERNS = [
+  /^assessment(\.|$)/, // reference / dates
+  /^reportCreatedDate$/,
+  /^inspectionDate$/,
+  /^reference$/,
+  /^epcSummary(\.|$)/,
+  /^estimatedEnergyCosts(\.|$)/,
+  /^propertySummary(\.|$)/,
+  /^recommendedMeasures(\.|$)/,
+];
+
+function isPracticalIgnoredPath(path) {
+  return PRACTICAL_IGNORE_PATTERNS.some((re) => re.test(path));
+}
+
+function tolerancePractical(path) {
+  if (path.endsWith("wallThicknessMm")) return 100; // mm
+  if (
+    /(heightM|widthM|hlpM|pwlM|floorAreaM2|totalFloorAreaM2)$/.test(path)
+  ) {
+    return 0.05; // metres
+  }
+  return null;
+}
+
+function leafEqualsPractical(expected, actual, tol) {
+  if (expected === undefined || expected === null) return true; // master not set, skip
+  if (tol !== null && tol !== undefined) {
+    const a = Number(expected);
+    const b = Number(actual);
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+      return Math.abs(a - b) <= tol;
+    }
+    return false;
+  }
+  if (typeof expected === "string" && typeof actual === "string") {
+    return expected.trim().toLowerCase() === actual.trim().toLowerCase();
+  }
+  return expected === actual;
+}
+
+function severityPractical(path) {
+  // Most fields affect RdSAP outputs → must. Soften a few harmless ones.
+  if (
+    /(orientation|frameType|location|alt|tenureType|transactionType|terrainType|measurementLocation|relatedPartyDisclosure)$/i.test(
+      path
+    )
+  ) {
+    return "should";
+  }
+  return "must";
+}
+
+function prettyPracticalPath(path) {
+  return path
+    .replace(/\.\[([^\]]+)\]/g, " #$1")
+    .replace(/\[([^\]]+)\]/g, " #$1")
+    .replace(/\./g, " → ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/(\d+)Mm/g, "$1 mm")
+    .replace(/Mm$/, " mm")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatPracticalValue(v) {
+  if (v === undefined || v === null) return "(not set)";
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  if (typeof v === "string") return v.trim() ? `“${v}”` : "(blank)";
+  if (typeof v === "number") return String(v);
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function diffPractical(master, extracted) {
+  const items = [];
+
+  function walk(mNode, eNode, path) {
+    const pathStr = path.join(".");
+    if (isPracticalIgnoredPath(pathStr)) return;
+
+    if (Array.isArray(mNode)) {
+      const eArr = Array.isArray(eNode) ? eNode : [];
+      if (mNode.length !== eArr.length) {
+        items.push(
+          makePracticalItem(
+            pathStr + ".count",
+            mNode.length,
+            eArr.length,
+            "must"
+          )
+        );
+      }
+      const matchById =
+        mNode.length > 0 &&
+        mNode.every((m) => m && typeof m === "object" && "id" in m);
+      mNode.forEach((mItem, i) => {
+        let aItem = null;
+        if (matchById) {
+          aItem =
+            eArr.find((x) => x && typeof x === "object" && x.id === mItem.id) ||
+            null;
+        }
+        if (!aItem) aItem = eArr[i];
+        walk(
+          mItem,
+          aItem,
+          [
+            ...path,
+            `[${matchById ? "id=" + mItem.id : i}]`,
+          ]
+        );
+      });
+      return;
+    }
+
+    if (mNode && typeof mNode === "object") {
+      for (const key of Object.keys(mNode)) {
+        walk(mNode[key], eNode?.[key], [...path, key]);
+      }
+      return;
+    }
+
+    // Leaf
+    const tol = tolerancePractical(pathStr);
+    if (!leafEqualsPractical(mNode, eNode, tol)) {
+      items.push(makePracticalItem(pathStr, mNode, eNode));
+    }
+  }
+
+  function makePracticalItem(path, expected, actual, sevOverride) {
+    const id =
+      "p-" +
+      path
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 96);
+    const pretty = prettyPracticalPath(path);
+    return {
+      id,
+      label: `${pretty}: trainee recorded ${formatPracticalValue(
+        actual
+      )}, master shows ${formatPracticalValue(expected)}.`,
+      severity: sevOverride || severityPractical(path),
+      evidenceTags: [],
+    };
+  }
+
+  walk(master, extracted || {}, []);
+  return items;
+}
+
+function generatePracticalFeedbackLocal(flagged, practicalLabel) {
+  if (!flagged.length) {
+    return (
+      "All entries match the master answer key — you have met the criteria " +
+      "and successfully completed " +
+      (practicalLabel || "this practical assessment") +
+      ".\n\nThanks!"
+    );
+  }
+  const lines = ["A few items to review against the property:", ""];
+  for (const item of flagged) {
+    // Strip the technical "trainee recorded X, master shows Y" suffix and
+    // produce a softer phrasing for the trainee.
+    let label = item.label || "";
+    label = label.replace(/master shows /i, "the property record shows ");
+    lines.push(`• ${label}`);
+  }
+  lines.push("");
+  lines.push(
+    "Please update the affected field(s) and re-submit. If you need help, please contact the helpline."
+  );
+  lines.push("");
+  lines.push("Thanks!");
+  return lines.join("\n");
 }
 
 async function callClaudeForSiteNotes(text, previous) {
@@ -3602,26 +3771,33 @@ async function callClaudeForSiteNotes(text, previous) {
       "[EPC] Claude hit max_tokens — response may be truncated; bump in code if this happens often"
     );
   }
-  // Normalise checklist items so each has an id.
-  const knownTags = new Set(
-    getBucket().categories.map((c) => c.title.toLowerCase())
-  );
-  parsed.checklist = (parsed.checklist || []).map((it, i) => ({
-    id:
-      it.id ||
-      String(it.label || `item-${i}`)
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-|-$/g, "")
-        .slice(0, 80),
-    label: it.label || "",
-    severity: ["must", "should", "info"].includes(it.severity)
-      ? it.severity
-      : "info",
-    evidenceTags: Array.isArray(it.evidenceTags)
-      ? it.evidenceTags.filter((t) => knownTags.has(String(t).toLowerCase()))
-      : [],
-  }));
+  // Practical-mode: ignore whatever Claude returned for the checklist and
+  // run the diff locally for deterministic results.
+  const practicalNow = getCurrentPractical();
+  if (practicalNow?.master) {
+    parsed.checklist = diffPractical(practicalNow.master, parsed.extracted || {});
+  } else {
+    // Normalise checklist items so each has an id.
+    const knownTags = new Set(
+      getBucket().categories.map((c) => c.title.toLowerCase())
+    );
+    parsed.checklist = (parsed.checklist || []).map((it, i) => ({
+      id:
+        it.id ||
+        String(it.label || `item-${i}`)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "")
+          .slice(0, 80),
+      label: it.label || "",
+      severity: ["must", "should", "info"].includes(it.severity)
+        ? it.severity
+        : "info",
+      evidenceTags: Array.isArray(it.evidenceTags)
+        ? it.evidenceTags.filter((t) => knownTags.has(String(t).toLowerCase()))
+        : [],
+    }));
+  }
   return parsed;
 }
 
