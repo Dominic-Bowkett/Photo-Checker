@@ -102,6 +102,28 @@ function normPostcode(s) {
   return String(s || "").toUpperCase().replace(/\s+/g, "");
 }
 
+function detectPostcodeFromText(text) {
+  // UK postcode regex (case-insensitive). Look at the first chunk of the PDF
+  // text where the address typically sits.
+  const re =
+    /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
+  const m = String(text || "").slice(0, 4000).match(re);
+  return m ? m[1].toUpperCase().replace(/\s+/g, " ").trim() : null;
+}
+
+function getPracticalByPostcode(postcode) {
+  if (!postcode) return null;
+  const masters = (typeof window !== "undefined" && window.PRACTICAL_MASTERS) || {};
+  const norm = normPostcode(postcode);
+  for (const key of Object.keys(masters)) {
+    const cfg = masters[key];
+    if (cfg?.postcodeMatch && normPostcode(cfg.postcodeMatch) === norm) {
+      return { id: key, ...cfg };
+    }
+  }
+  return null;
+}
+
 function getPracticalByExtractedAddress(extracted) {
   const masters = (typeof window !== "undefined" && window.PRACTICAL_MASTERS) || {};
   const addr = extracted?.property?.address || {};
@@ -3323,10 +3345,33 @@ async function runSiteNotesImport(url) {
     return;
   }
 
-  setProgress("Asking Claude…");
-  let result;
+  // Pre-scan the PDF text for a UK postcode — lets us promote the bucket into
+  // practical mode BEFORE the Claude call so the right system prompt + master
+  // shape are used. Keeps this independent of bucket title (so any practical
+  // EPC with a registered postcode picks up the correct master).
   const bucket = getBucket();
   const previous = bucket.siteNotes || null;
+  const sniffedPostcode = detectPostcodeFromText(text);
+  const sniffedMaster = sniffedPostcode
+    ? getPracticalByPostcode(sniffedPostcode)
+    : null;
+  if (sniffedMaster?.id && bucket.practicalKey !== sniffedMaster.id) {
+    bucket.practicalKey = sniffedMaster.id;
+    console.debug(
+      "[EPC] postcode pre-scan matched master:",
+      sniffedPostcode,
+      "→",
+      sniffedMaster.id
+    );
+    // Persist immediately so getCurrentPractical inside the Claude call
+    // resolves the right master.
+    save().catch(() => {});
+    // Reflect the practical banner now too.
+    render();
+  }
+
+  setProgress("Asking Claude…");
+  let result;
   try {
     result = await callClaudeForSiteNotes(text, previous);
   } catch (err) {
