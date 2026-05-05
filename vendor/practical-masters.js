@@ -551,7 +551,6 @@ window.PRACTICAL_MASTERS = {
     label: "71 Woodland Road, Hinckley (LE10 1JF)",
     postcodeMatch: "LE10 1JF",
     addressKeywords: ["71 Woodland Road"],
-    keepPhotoUi: true,
     master: {
       assessment: {
         reference: "122967",
@@ -748,7 +747,6 @@ window.PRACTICAL_MASTERS = {
     label: "Flat 3 Woodbourne, Birmingham (B15 3PH)",
     postcodeMatch: "B15 3PH",
     addressKeywords: ["Flat 3", "Woodbourne"],
-    keepPhotoUi: true,
     master: {
       assessment: { reference: "126244", type: "EPC", inspectionDate: "2026-01-05", reportCreatedDate: "2026-04-20" },
       property: {
