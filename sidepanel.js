@@ -98,8 +98,56 @@ function getPracticalMode(meta) {
   return null;
 }
 
+function normPostcode(s) {
+  return String(s || "").toUpperCase().replace(/\s+/g, "");
+}
+
+function getPracticalByExtractedAddress(extracted) {
+  const masters = (typeof window !== "undefined" && window.PRACTICAL_MASTERS) || {};
+  const addr = extracted?.property?.address || {};
+  const pc = normPostcode(addr.postcode);
+  const lines = [addr.line1, addr.line2, addr.town]
+    .filter(Boolean)
+    .map((s) => String(s).toLowerCase());
+  for (const key of Object.keys(masters)) {
+    const cfg = masters[key];
+    if (cfg?.postcodeMatch && pc && normPostcode(cfg.postcodeMatch) === pc) {
+      return { id: key, ...cfg };
+    }
+    if (cfg?.addressKeywords?.length) {
+      const hits = cfg.addressKeywords.every((kw) =>
+        lines.some((l) => l.includes(String(kw).toLowerCase()))
+      );
+      if (hits) return { id: key, ...cfg };
+    }
+  }
+  return null;
+}
+
+function getPracticalById(id) {
+  if (!id) return null;
+  const masters = (typeof window !== "undefined" && window.PRACTICAL_MASTERS) || {};
+  const cfg = masters[id];
+  return cfg ? { id, ...cfg } : null;
+}
+
 function getCurrentPractical() {
-  return getPracticalMode(getBucket().meta);
+  const bucket = getBucket();
+  // Address-detected key wins (set when the trainee's PDF address matched
+  // a registered property). Falls back to title-match (e.g. EPC1 / EPC2).
+  if (bucket.practicalKey) {
+    const byId = getPracticalById(bucket.practicalKey);
+    if (byId) return byId;
+  }
+  return getPracticalMode(bucket.meta);
+}
+
+function shouldHidePhotoUiForPractical() {
+  const cfg = getCurrentPractical();
+  if (!cfg) return false;
+  // keepPhotoUi (real properties matched by address) keeps the photo cards.
+  // Title-matched practicals (training EPC1/EPC2) hide them.
+  return !cfg.keepPhotoUi;
 }
 
 function bucketLabel(bucket, key) {
@@ -376,17 +424,26 @@ if (chrome.tabs?.onUpdated) {
 function render() {
   rebuildAssessmentBar();
   const practical = getCurrentPractical();
-  document.body.classList.toggle("practical-mode", !!practical);
+  const hidePhotos = shouldHidePhotoUiForPractical();
+  document.body.classList.toggle("practical-mode", hidePhotos);
   categoriesEl.innerHTML = "";
   if (practical) {
     const banner = document.createElement("div");
     banner.className = "practical-banner";
-    banner.innerHTML =
-      `<strong>${escapeHtml(practical.label)}</strong><br>` +
-      `Photo evidence checks are disabled for this practical assessment. ` +
-      `The site notes import will compare the trainee's submission against the master answer key.`;
+    if (hidePhotos) {
+      banner.innerHTML =
+        `<strong>${escapeHtml(practical.label)}</strong><br>` +
+        `Photo evidence checks are disabled for this practical assessment. ` +
+        `The site notes import will compare the trainee's submission against the master answer key.`;
+    } else {
+      banner.innerHTML =
+        `<strong>Master answer key detected — ${escapeHtml(practical.label)}</strong><br>` +
+        `Site notes will be checked against this property's master inputs. ` +
+        `Photo evidence checks remain available below.`;
+    }
     categoriesEl.appendChild(banner);
-  } else {
+  }
+  if (!hidePhotos) {
     for (const cat of getBucket().categories) {
       categoriesEl.appendChild(renderCategory(cat));
     }
@@ -452,7 +509,7 @@ function renderAllPhotosPinned() {
   const countEl = document.getElementById("allPhotosCount");
   const reviewBtn = document.getElementById("allPhotosReview");
   if (!section || !countEl || !reviewBtn) return;
-  if (getCurrentPractical()) {
+  if (shouldHidePhotoUiForPractical()) {
     section.hidden = true;
     return;
   }
@@ -498,7 +555,7 @@ function renderFloorplanPinned() {
   const expand = document.getElementById("floorplanExpand");
   const checkBtn = document.getElementById("floorplanCheck");
   const cat = findFloorplanCategory();
-  if (getCurrentPractical()) {
+  if (shouldHidePhotoUiForPractical()) {
     section.hidden = true;
     return;
   }
@@ -3896,7 +3953,21 @@ async function callClaudeForSiteNotes(text, previous) {
   }
   // Practical-mode: ignore whatever Claude returned for the checklist and
   // run the diff locally for deterministic results.
-  const practicalNow = getCurrentPractical();
+  // Also: if the extracted address matches a registered property master,
+  // auto-promote the bucket into practical mode for that property so the
+  // diff still runs.
+  let practicalNow = getCurrentPractical();
+  if (!practicalNow?.master) {
+    const byAddr = getPracticalByExtractedAddress(parsed.extracted);
+    if (byAddr?.master) {
+      practicalNow = byAddr;
+      const bucket = getBucket();
+      if (bucket.practicalKey !== byAddr.id) {
+        bucket.practicalKey = byAddr.id;
+        // save will be called by the caller; nothing else to do here.
+      }
+    }
+  }
   if (practicalNow?.master) {
     parsed.checklist = diffPractical(practicalNow.master, parsed.extracted || {});
   } else {
