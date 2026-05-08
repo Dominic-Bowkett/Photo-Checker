@@ -270,8 +270,8 @@
   // so it works across slightly different labels, but strict enough to avoid
   // clicking nearby controls like "Mark outcome".
   const NEXT_BUTTON_RE =
-    /^(continue|next(\s*(section|page))?|save\s*(&|and)\s*(continue|next)|save\s*and\s*next)$/i;
-  const clickNextSection = () => {
+    /^(continue(\s+to(\s+the)?\s+next(\s+(section|page))?)?|next(\s+(section|page))?|save\s*(&|and)\s*(continue|next)|save\s+and\s+next)$/i;
+  const clickNextSectionOnce = () => {
     const candidates = Array.from(
       document.querySelectorAll(
         'button, a, [role="button"], input[type="submit"], input[type="button"]'
@@ -286,7 +286,6 @@
       if (!NEXT_BUTTON_RE.test(text)) continue;
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) continue;
-      // Skip elements hidden by ancestors.
       const style = window.getComputedStyle(el);
       if (style.visibility === "hidden" || style.display === "none") continue;
       matches.push({ el, text, top: rect.top + window.scrollY });
@@ -294,8 +293,6 @@
     if (!matches.length) {
       return { ok: false, reason: "no Continue / Next button found on the page" };
     }
-    // Prefer the one furthest down the page (the section continuation button
-    // is normally the very last visible action).
     matches.sort((a, b) => b.top - a.top);
     const target = matches[0];
     try {
@@ -305,6 +302,19 @@
     }
     target.el.click();
     return { ok: true, text: target.text };
+  };
+
+  // The marking app renders sections in JS, so the continuation button can
+  // appear a moment after the page does. Poll briefly so the assessor
+  // doesn't have to time their click.
+  const clickNextSection = async (timeoutMs = 3000, intervalMs = 150) => {
+    const start = Date.now();
+    let last = clickNextSectionOnce();
+    while (!last.ok && Date.now() - start < timeoutMs) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+      last = clickNextSectionOnce();
+    }
+    return last;
   };
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -323,12 +333,12 @@
       return true; // async response
     }
     if (msg?.type === "clickNextSection") {
-      try {
-        sendResponse(clickNextSection());
-      } catch (err) {
-        sendResponse({ ok: false, reason: String(err?.message || err) });
-      }
-      return false;
+      clickNextSection()
+        .then(sendResponse)
+        .catch((err) =>
+          sendResponse({ ok: false, reason: String(err?.message || err) })
+        );
+      return true; // async response
     }
   });
 })();
