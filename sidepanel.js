@@ -2060,6 +2060,27 @@ $("#settingsSave").addEventListener("click", async () => {
   refreshDetectedAutoTagVisibility();
 });
 
+$("#settingsWipeAll")?.addEventListener("click", async () => {
+  const count = Object.keys(state.assessments || {}).length;
+  if (
+    !confirm(
+      `Clear all ${count} stored assessment${count === 1 ? "" : "s"}, including photos, notes, site notes, ticks and history?\n\n` +
+        "This cannot be undone. Your Claude API key and model choice will be kept."
+    )
+  ) {
+    return;
+  }
+  // Reset to a single empty Default bucket.
+  state.assessments = {};
+  state.currentKey = DEFAULT_KEY;
+  ensureBucket(DEFAULT_KEY);
+  if (typeof clearDetected === "function") clearDetected();
+  await save();
+  settingsModal.hidden = true;
+  render();
+  showToast("All stored assessments cleared.", { kind: "success" });
+});
+
 // ---- Claude vision auto-tagging ----------------------------------------
 async function callClaudeForTags(item) {
   let dataUrl = item.dataUrl;
