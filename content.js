@@ -160,21 +160,27 @@
       const title = norm(titleEl.textContent || "");
       let studentName = "";
 
-      // Find a "Attempt N" element, then walk forward through its siblings
-      // (and up one level if needed) until we hit a short text node that
-      // looks like a name. We avoid matching Attempt N itself.
+      // Find every "Attempt N" element (the same string can appear multiple
+      // times in the new layout — once in a compact summary and once in the
+      // detailed row). For each, walk forward through siblings, skipping
+      // separators (|), status badges, and merged textContent blocks. The
+      // first one that yields a clean name wins.
       const candidates = document.querySelectorAll("div, span, a");
-      const looksLikeName = (s) =>
-        !!s &&
-        s.length > 0 &&
-        s.length < 80 &&
-        !/^Attempt\b/i.test(s) &&
-        !/^submitted$/i.test(s) &&
-        !/^released$/i.test(s);
+      const isAttempt = (s) => /^Attempt\s+\d+$/i.test(s);
+      // A real name should be letters / spaces / apostrophes / hyphens / dots
+      // only — Unicode-aware so accented characters work. Length-bounded so
+      // we never grab a row that combines status + attempt + name into one
+      // textContent.
+      const looksLikeName = (s) => {
+        if (!s) return false;
+        if (s.length < 2 || s.length > 80) return false;
+        if (/Attempt/i.test(s)) return false;
+        if (/Submitted|Released|Draft|Marked|Pending/i.test(s)) return false;
+        return /^[\p{L}][\p{L} .'\-]+$/u.test(s);
+      };
 
       outer: for (const el of candidates) {
-        const t = norm(el.textContent);
-        if (!/^Attempt\s+\d+$/i.test(t)) continue;
+        if (!isAttempt(norm(el.textContent))) continue;
         // Walk siblings of this element first.
         let next = el.nextElementSibling;
         while (next) {
@@ -185,7 +191,7 @@
           }
           next = next.nextElementSibling;
         }
-        // Climb one level and try the parent's siblings.
+        // Climb one level and try the parent's siblings as a fallback.
         let parentNext = el.parentElement?.nextElementSibling;
         while (parentNext) {
           const nt = norm(parentNext.textContent);
@@ -227,6 +233,37 @@
     };
   };
 
+  // The new AssessApp header is rendered by client-side JS, so the heading
+  // may not be in the DOM the moment we're asked. Poll briefly until either
+  // a result is found or the window expires.
+  const getAssessmentContextAsync = (timeoutMs = 2500, intervalMs = 150) =>
+    new Promise((resolve) => {
+      const start = Date.now();
+      const tick = () => {
+        const ctx = getAssessmentContext();
+        if (ctx && (ctx.studentName || ctx.title)) {
+          resolve(ctx);
+          return;
+        }
+        // Fast-path for pages that have no heading shell at all and never
+        // will — give up after a short window so we don't block the side
+        // panel on every non-assessment tab.
+        const looksLikeAssessmentShell =
+          !!document.querySelector(".text-truncate.d-block") ||
+          !!document.querySelector(".page-heading");
+        if (!looksLikeAssessmentShell && Date.now() - start >= 600) {
+          resolve(null);
+          return;
+        }
+        if (Date.now() - start >= timeoutMs) {
+          resolve(ctx); // may be null
+          return;
+        }
+        setTimeout(tick, intervalMs);
+      };
+      tick();
+    });
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === "findEpcPhotos") {
       try {
@@ -237,12 +274,10 @@
       return false;
     }
     if (msg?.type === "getAssessmentContext") {
-      try {
-        sendResponse(getAssessmentContext());
-      } catch (err) {
-        sendResponse(null);
-      }
-      return false;
+      getAssessmentContextAsync()
+        .then((ctx) => sendResponse(ctx))
+        .catch(() => sendResponse(null));
+      return true; // async response
     }
   });
 })();
