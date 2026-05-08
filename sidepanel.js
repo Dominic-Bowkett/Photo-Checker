@@ -1318,6 +1318,38 @@ function showDetected(photos) {
   }
 }
 
+$("#nextSection")?.addEventListener("click", async () => {
+  let tab;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch (_) {
+    showToast("Could not read the active tab.", { kind: "error" });
+    return;
+  }
+  if (!tab?.id) {
+    showToast("No active tab.", { kind: "error" });
+    return;
+  }
+  let res;
+  try {
+    res = await chrome.tabs.sendMessage(tab.id, { type: "clickNextSection" });
+  } catch (e) {
+    showToast(
+      "Could not reach the page (try reloading the active tab).",
+      { kind: "error" }
+    );
+    return;
+  }
+  if (res?.ok) {
+    showToast(`Clicked “${res.text}”.`, { kind: "success", ttl: 2000 });
+  } else {
+    showToast(
+      res?.reason || "No Continue / Next button found on the page.",
+      { kind: "error" }
+    );
+  }
+});
+
 $("#scanTab").addEventListener("click", async () => {
   let tab;
   try {

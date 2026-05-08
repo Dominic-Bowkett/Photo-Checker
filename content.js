@@ -264,6 +264,49 @@
       tick();
     });
 
+  // Click the "Continue / Next section" button on the active page. Used by
+  // the side panel's Next button so the assessor can advance through marking
+  // sections without leaving the panel. Heuristic match on the button text
+  // so it works across slightly different labels, but strict enough to avoid
+  // clicking nearby controls like "Mark outcome".
+  const NEXT_BUTTON_RE =
+    /^(continue|next(\s*(section|page))?|save\s*(&|and)\s*(continue|next)|save\s*and\s*next)$/i;
+  const clickNextSection = () => {
+    const candidates = Array.from(
+      document.querySelectorAll(
+        'button, a, [role="button"], input[type="submit"], input[type="button"]'
+      )
+    );
+    const matches = [];
+    for (const el of candidates) {
+      if (el.disabled) continue;
+      if (el.getAttribute("aria-disabled") === "true") continue;
+      const text = norm(el.textContent || el.value || "");
+      if (!text) continue;
+      if (!NEXT_BUTTON_RE.test(text)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) continue;
+      // Skip elements hidden by ancestors.
+      const style = window.getComputedStyle(el);
+      if (style.visibility === "hidden" || style.display === "none") continue;
+      matches.push({ el, text, top: rect.top + window.scrollY });
+    }
+    if (!matches.length) {
+      return { ok: false, reason: "no Continue / Next button found on the page" };
+    }
+    // Prefer the one furthest down the page (the section continuation button
+    // is normally the very last visible action).
+    matches.sort((a, b) => b.top - a.top);
+    const target = matches[0];
+    try {
+      target.el.scrollIntoView({ block: "center", behavior: "instant" });
+    } catch (_) {
+      target.el.scrollIntoView();
+    }
+    target.el.click();
+    return { ok: true, text: target.text };
+  };
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === "findEpcPhotos") {
       try {
@@ -278,6 +321,14 @@
         .then((ctx) => sendResponse(ctx))
         .catch(() => sendResponse(null));
       return true; // async response
+    }
+    if (msg?.type === "clickNextSection") {
+      try {
+        sendResponse(clickNextSection());
+      } catch (err) {
+        sendResponse({ ok: false, reason: String(err?.message || err) });
+      }
+      return false;
     }
   });
 })();
