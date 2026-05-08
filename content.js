@@ -142,12 +142,72 @@
   };
 
   // Assessment context: read student name and assessment title from the
-  // page heading on assessapp pages.
-  // <div class="page-heading">
-  //   <h3 class="truncate">Student Name</h3>
-  //   <h5 class="hint-text truncate">Assessment Title</h5>
-  // </div>
+  // page heading. Two layouts are supported:
+  //
+  //   New (current AssessApp design):
+  //     <div class="text-truncate d-block">T/123 - Practical Assessment | …</div>
+  //     <... row with status, "Attempt N", and a sibling div with the name>
+  //
+  //   Old (kept as fallback):
+  //     <div class="page-heading">
+  //       <h3 class="truncate">Student Name</h3>
+  //       <h5 class="hint-text truncate">Assessment Title</h5>
+  //     </div>
   const getAssessmentContext = () => {
+    // ---- New layout ----
+    const titleEl = document.querySelector(".text-truncate.d-block");
+    if (titleEl) {
+      const title = norm(titleEl.textContent || "");
+      let studentName = "";
+
+      // Find a "Attempt N" element, then walk forward through its siblings
+      // (and up one level if needed) until we hit a short text node that
+      // looks like a name. We avoid matching Attempt N itself.
+      const candidates = document.querySelectorAll("div, span, a");
+      const looksLikeName = (s) =>
+        !!s &&
+        s.length > 0 &&
+        s.length < 80 &&
+        !/^Attempt\b/i.test(s) &&
+        !/^submitted$/i.test(s) &&
+        !/^released$/i.test(s);
+
+      outer: for (const el of candidates) {
+        const t = norm(el.textContent);
+        if (!/^Attempt\s+\d+$/i.test(t)) continue;
+        // Walk siblings of this element first.
+        let next = el.nextElementSibling;
+        while (next) {
+          const nt = norm(next.textContent);
+          if (looksLikeName(nt)) {
+            studentName = nt;
+            break outer;
+          }
+          next = next.nextElementSibling;
+        }
+        // Climb one level and try the parent's siblings.
+        let parentNext = el.parentElement?.nextElementSibling;
+        while (parentNext) {
+          const nt = norm(parentNext.textContent);
+          if (looksLikeName(nt)) {
+            studentName = nt;
+            break outer;
+          }
+          parentNext = parentNext.nextElementSibling;
+        }
+      }
+
+      if (title || studentName) {
+        return {
+          studentName,
+          title,
+          pageUrl: location.href,
+          pageTitle: document.title,
+        };
+      }
+    }
+
+    // ---- Old layout fallback ----
     const heading = document.querySelector(".page-heading");
     if (!heading) return null;
     const studentName = norm(
