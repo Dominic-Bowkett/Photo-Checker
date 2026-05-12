@@ -112,8 +112,54 @@
   const findEpcPhotos = () => {
     const photos = [];
     const seen = new Set();
+    const pushImg = (img, section = "") => {
+      if (!isLikelyPhoto(img)) return;
+      const url = resolveSrc(img);
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      photos.push({
+        url,
+        alt: img.alt || "",
+        section,
+        width: img.naturalWidth || 0,
+        height: img.naturalHeight || 0,
+        pageUrl: location.href,
+        pageTitle: document.title,
+      });
+    };
 
+    // Preferred: bound the search by the two text markers on the new layout.
+    //   start: "Please upload your photographic evidence below."
+    //   end:   "2. Written Site Notes" (the * is dropped — match the heading
+    //          text loosely to handle "Written Site Notes" alone too).
+    const startAnchor = findInnermostByText(
+      "Please upload your photographic evidence below"
+    );
+    const endAnchor =
+      findInnermostByText("2. Written Site Notes") ||
+      findInnermostByText("Written Site Notes");
+
+    if (startAnchor && endAnchor) {
+      const walker = document.createTreeWalker(
+        document.body,
+        NodeFilter.SHOW_ELEMENT
+      );
+      let node;
+      while ((node = walker.nextNode())) {
+        // Stop once we reach (or step into) the end heading.
+        if (node === endAnchor || endAnchor.contains(node)) break;
+        const pos = startAnchor.compareDocumentPosition(node);
+        if (!(pos & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+        if (node.tagName !== "IMG") continue;
+        pushImg(node);
+      }
+      return { photos, anchor: true };
+    }
+
+    // Fallback: original behaviour for legacy pages — anchor on the question
+    // heading and use the enclosing container.
     const anchor =
+      startAnchor ||
       findInnermostByText("1. Photographic Evidence") ||
       findInnermostByText("Photographic Evidence");
     if (!anchor) return { photos, anchor: false };
@@ -122,22 +168,7 @@
     if (!scope) return { photos, anchor: true };
 
     const imgs = scope.querySelectorAll("img");
-    for (const img of imgs) {
-      if (!isLikelyPhoto(img)) continue;
-      const url = resolveSrc(img);
-      if (!url || seen.has(url)) continue;
-      seen.add(url);
-      photos.push({
-        url,
-        alt: img.alt || "",
-        section: nearestLabel(img, scope),
-        width: img.naturalWidth || 0,
-        height: img.naturalHeight || 0,
-        pageUrl: location.href,
-        pageTitle: document.title,
-      });
-    }
-
+    for (const img of imgs) pushImg(img, nearestLabel(img, scope));
     return { photos, anchor: true };
   };
 
