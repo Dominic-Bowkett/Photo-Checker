@@ -1788,30 +1788,84 @@ function blobAsFile(blob, name) {
   return new File([blob], name, { type: blob.type });
 }
 
-importInput.addEventListener("change", async (e) => {
-  const files = [...(e.target.files || [])];
+const importFolderInput = $("#importFolder");
+$("#importPickFolder")?.addEventListener("click", () =>
+  importFolderInput?.click()
+);
+
+function isHandledImportType(file) {
+  const name = (file?.name || "").toLowerCase();
+  if (file?.type?.startsWith("image/")) return true;
+  if (/\.(jpe?g|png|gif|webp|bmp)$/i.test(name)) return true;
+  if (name.endsWith(".pdf")) return true;
+  if (name.endsWith(".docx")) return true;
+  if (name.endsWith(".zip")) return true;
+  return false;
+}
+
+async function handleImportFiles(files) {
+  files = (files || []).filter((f) => f && f.size !== 0);
   if (!files.length) return;
-  for (const file of files) {
+  closeImportModal();
+
+  const handled = files.filter(isHandledImportType);
+  const skipped = files.length - handled.length;
+
+  if (!handled.length) {
+    showToast(
+      `No supported files found among ${files.length} item${
+        files.length === 1 ? "" : "s"
+      }.`,
+      { kind: "error" }
+    );
+    return;
+  }
+
+  showToast(
+    `Importing ${handled.length} file${handled.length === 1 ? "" : "s"}…`,
+    { ttl: 2000 }
+  );
+
+  let added = 0;
+  const failures = [];
+  const newPhotos = [];
+  for (const file of handled) {
     try {
       const photos = await extractFromFile(file);
       if (photos.length) {
-        showDetected([...(detected || []), ...photos]);
-        showToast(
-          `Imported ${photos.length} image${photos.length === 1 ? "" : "s"} from ${file.name}.`,
-          { kind: "success" }
-        );
-      } else {
-        showToast(`No images found in ${file.name}.`, { kind: "error" });
+        newPhotos.push(...photos);
+        added += photos.length;
       }
     } catch (err) {
-      console.error(err);
-      showToast(`Could not read ${file.name}: ${err?.message || err}`, {
-        kind: "error",
-      });
+      failures.push(file.name);
+      console.warn("Import failed for", file.name, err);
     }
   }
+
+  if (newPhotos.length) {
+    showDetected([...(detected || []), ...newPhotos]);
+  }
+
+  const bits = [`Imported ${added} image${added === 1 ? "" : "s"}`];
+  if (handled.length !== added && handled.length !== 1) {
+    bits.push(`from ${handled.length} file${handled.length === 1 ? "" : "s"}`);
+  }
+  if (skipped) bits.push(`${skipped} skipped`);
+  if (failures.length) bits.push(`${failures.length} failed`);
+  showToast(bits.join(" · ") + ".", {
+    kind: failures.length || !added ? "error" : "success",
+    ttl: 5000,
+  });
+}
+
+importInput.addEventListener("change", async (e) => {
+  await handleImportFiles([...(e.target.files || [])]);
   importInput.value = "";
-  closeImportModal();
+});
+
+importFolderInput?.addEventListener("change", async (e) => {
+  await handleImportFiles([...(e.target.files || [])]);
+  if (importFolderInput) importFolderInput.value = "";
 });
 
 async function extractFromFile(file) {
@@ -1830,7 +1884,43 @@ async function extractFromFile(file) {
   }
   if (name.endsWith(".docx")) return extractFromDocx(file);
   if (name.endsWith(".pdf")) return extractFromPdf(file);
-  throw new Error("Unsupported file type. Use PDF, DOCX, or an image.");
+  if (name.endsWith(".zip")) return extractFromZip(file);
+  throw new Error("Unsupported file type. Use PDF, DOCX, ZIP or an image.");
+}
+
+async function extractFromZip(file) {
+  // Walk every entry in the user's ZIP and surface anything that looks like
+  // an image. Reuses the same ZIP reader as the DOCX extractor.
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let entries;
+  try {
+    entries = readZipEntries(buf);
+  } catch (err) {
+    throw new Error("Could not read ZIP: " + (err?.message || err));
+  }
+  const photos = [];
+  for (const entry of entries) {
+    if (/\/$/.test(entry.name)) continue; // directory entry
+    if (/__MACOSX\//i.test(entry.name)) continue; // macOS resource forks
+    if (/(^|\/)\._/.test(entry.name)) continue;   // macOS hidden ._files
+    if (/(^|\/)\.DS_Store$/i.test(entry.name)) continue;
+    if (!/\.(png|jpe?g|gif|webp|bmp)$/i.test(entry.name)) continue;
+    const bytes = await inflateEntry(buf, entry);
+    if (!bytes) continue;
+    const mime = mimeFromName(entry.name);
+    const blob = new Blob([bytes], { type: mime });
+    const dataUrl = await blobToDataUrl(blob);
+    const compact = await downscaleDataUrl(dataUrl);
+    const leaf = entry.name.split("/").pop();
+    photos.push({
+      url: `${file.name}#${entry.name}`,
+      dataUrl: compact,
+      pageTitle: `${file.name} – ${leaf}`,
+      alt: "",
+      section: "ZIP import",
+    });
+  }
+  return photos;
 }
 
 async function extractFromDocx(file) {

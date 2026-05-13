@@ -45,10 +45,11 @@
       <input
         id="importFile"
         type="file"
-        accept=".pdf,.docx,image/*"
+        accept=".pdf,.docx,.zip,image/*"
         multiple
         hidden
       />
+      <input id="importFolder" type="file" webkitdirectory multiple hidden />
       <button id="addCategory" title="Add a custom tag">+ Tag</button>
     </div>
 
@@ -293,10 +294,13 @@
 
           <label>From file</label>
           <p class="settings-hint">
-            PDF, DOCX or image files. Embedded images will be extracted and
-            shown in the Detected pane for tagging.
+            PDF, DOCX, ZIP or image files. ZIPs are unpacked locally and every
+            image inside is added. Embedded images in PDF/DOCX are extracted.
           </p>
-          <button id="importPickFile">Choose file…</button>
+          <div class="import-row">
+            <button id="importPickFile">Choose file(s)…</button>
+            <button id="importPickFolder">Choose folder…</button>
+          </div>
         </div>
         <footer>
           <button id="importDone" class="primary">Done</button>
