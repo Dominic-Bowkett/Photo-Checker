@@ -3901,9 +3901,13 @@ function diffPractical(master, extracted) {
     const pretty = prettyPracticalPath(path);
     return {
       id,
+      // Internal (assessor-facing) label still includes the master value so
+      // the assessor knows what the correct answer is while reviewing.
       label: `${pretty}: trainee recorded ${formatPracticalValue(
         actual
       )}, master shows ${formatPracticalValue(expected)}.`,
+      // area is what the student feedback uses — no answer leak.
+      area: pretty,
       severity: sevOverride || severityPractical(path),
       evidenceTags: [],
     };
@@ -3922,17 +3926,29 @@ function generatePracticalFeedbackLocal(flagged, practicalLabel) {
       ".\n\nThanks!"
     );
   }
-  const lines = ["A few items to review against the property:", ""];
+  // List only the areas — never reveal the master values to the trainee.
+  const seen = new Set();
+  const areas = [];
   for (const item of flagged) {
-    // Strip the technical "trainee recorded X, master shows Y" suffix and
-    // produce a softer phrasing for the trainee.
-    let label = item.label || "";
-    label = label.replace(/master shows /i, "the property record shows ");
-    lines.push(`• ${label}`);
+    const area =
+      item.area ||
+      // Fallback: derive an area name by stripping the technical suffix from
+      // the internal label.
+      String(item.label || "")
+        .split(":")[0]
+        .trim();
+    if (!area || seen.has(area.toLowerCase())) continue;
+    seen.add(area.toLowerCase());
+    areas.push(area);
   }
+  const lines = [
+    "You need to look into the following areas and review them:",
+    "",
+  ];
+  for (const a of areas) lines.push(`• ${a}`);
   lines.push("");
   lines.push(
-    "Please update the affected field(s) and re-submit. If you need help, please contact the helpline."
+    "Please review each of these against your site notes and re-submit. If you need help, please contact the helpline."
   );
   lines.push("");
   lines.push("Thanks!");
