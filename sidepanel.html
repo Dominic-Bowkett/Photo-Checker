@@ -12,7 +12,6 @@
     <header class="topbar">
       <h1>EPC Photo Organiser</h1>
       <div class="actions">
-        <button id="scanTab" title="Find photos on the active assessment page">Scan</button>
         <button id="nextSection" title="Click the Continue / Next section button on the active tab">Next →</button>
         <button id="summaryBtn" title="Summary of completed and outstanding evidence">Summary</button>
         <button id="exportAll" title="Download all photos as a zip">Export</button>
@@ -77,6 +76,13 @@
       </div>
     </section>
 
+    <section id="latestFilesPinned" class="pinned" hidden>
+      <header>
+        <h2>Latest files <span id="latestFilesCount" class="pinned-status"></span></h2>
+      </header>
+      <ul id="latestFilesList" class="latest-files"></ul>
+    </section>
+
     <section id="notesPinned" class="pinned" hidden>
       <header>
         <h2>Notes</h2>
@@ -93,6 +99,9 @@
       <header>
         <h2>Site notes &amp; checks</h2>
         <div class="pinned-actions">
+          <button id="siteNotesFromLatest" class="ai-action" title="Import the latest Written Site Notes PDF detected on the active tab" hidden>
+            ✨ From page
+          </button>
           <button id="siteNotesTabImport" class="ai-action" title="Import the current browser tab's PDF as site notes" hidden>
             ✨ From tab
           </button>
@@ -155,6 +164,7 @@
       <header>
         <h2>All photos <span id="allPhotosCount">0</span></h2>
         <div class="pinned-actions">
+          <button id="scanTab" title="Find photos on the active assessment page">Scan</button>
           <button id="allPhotosTabImport" title="Import the current browser tab as a photo / PDF / DOCX">
             From tab
           </button>

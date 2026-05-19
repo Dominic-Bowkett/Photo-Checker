@@ -397,6 +397,47 @@ async function detectActiveTabAssessment() {
   }
   await save();
   render();
+  // Kick off a one-shot section scan in the background. Surfaces any new
+  // photos into the Detected pane and stashes latest PDF links under the
+  // Latest files card. Best-effort — failures are silent.
+  scanActiveTabSections(tab.id).catch(() => {});
+}
+
+async function scanActiveTabSections(tabId) {
+  if (getCurrentPractical()?.keepPhotoUi === false) {
+    // Practical-mode buckets don't use the photo pipeline.
+  }
+  let res;
+  try {
+    res = await chrome.tabs.sendMessage(tabId, { type: "scanEpcSections" });
+  } catch (_) {
+    return;
+  }
+  if (!res?.anchor) return;
+  const bucket = getBucket();
+  // Merge latest files (newest per section wins).
+  const byId = new Map(
+    (bucket.latestFiles || []).map((f) => [f.id, f])
+  );
+  for (const f of res.latestFiles || []) {
+    const existing = byId.get(f.id);
+    if (!existing || (f.timestamp || "") > (existing.timestamp || "")) {
+      byId.set(f.id, f);
+    }
+  }
+  bucket.latestFiles = Array.from(byId.values());
+  // Surface new photos that aren't already filed and aren't already in the
+  // current detected list.
+  const existingUrls = existingPhotoUrls();
+  const detectedUrls = new Set(detected.map((d) => d.url).filter(Boolean));
+  const newPhotos = (res.photos || []).filter(
+    (p) => p.url && !existingUrls.has(p.url) && !detectedUrls.has(p.url)
+  );
+  if (newPhotos.length) {
+    showDetected([...(detected || []), ...newPhotos]);
+  }
+  await save();
+  render();
 }
 
 async function save() {
@@ -474,11 +515,43 @@ function render() {
   applyFilters();
   renderFloorplanPinned();
   renderAllPhotosPinned();
+  renderLatestFilesPinned();
   renderNotesPinned();
   renderSiteNotesPinned();
 }
 
 let notesSaveTimer = null;
+
+function renderLatestFilesPinned() {
+  const section = document.getElementById("latestFilesPinned");
+  const list = document.getElementById("latestFilesList");
+  const count = document.getElementById("latestFilesCount");
+  if (!section || !list) return;
+  const bucket = getBucket();
+  const files = (bucket.latestFiles || []).filter((f) => f && f.url);
+  if (!files.length) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  if (count) count.textContent = `(${files.length})`;
+  list.innerHTML = "";
+  for (const f of files) {
+    const li = document.createElement("li");
+    const label = document.createElement("span");
+    label.className = "lf-label";
+    label.textContent = f.label || f.id || "File";
+    const a = document.createElement("a");
+    a.href = f.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = f.title || f.url;
+    a.title = f.url;
+    li.appendChild(label);
+    li.appendChild(a);
+    list.appendChild(li);
+  }
+}
 
 function renderNotesPinned() {
   const section = document.getElementById("notesPinned");
@@ -2813,7 +2886,17 @@ function renderSiteNotesPinned() {
   siteNotesImportBtn.hidden = !settings?.claudeApiKey;
   const tabBtn = document.getElementById("siteNotesTabImport");
   if (tabBtn) tabBtn.hidden = !settings?.claudeApiKey;
+  const fromLatestBtn = document.getElementById("siteNotesFromLatest");
   const bucket = getBucket();
+  const latestWritten = (bucket.latestFiles || []).find(
+    (f) => f.id === "writtenSiteNotes" && f.url
+  );
+  if (fromLatestBtn) {
+    fromLatestBtn.hidden = !settings?.claudeApiKey || !latestWritten;
+    fromLatestBtn.onclick = latestWritten
+      ? () => runSiteNotesImport(latestWritten.url)
+      : null;
+  }
   const sn = bucket.siteNotes;
   const history = bucket.siteNotesHistory || [];
 
