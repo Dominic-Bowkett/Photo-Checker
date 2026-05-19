@@ -2415,40 +2415,63 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
   detectedAutoTagBtn.disabled = true;
   let totalAdded = 0;
   let failures = 0;
-  for (let i = 0; i < items.length; i++) {
-    detectedAutoTagBtn.textContent = `Tagging ${i + 1}/${items.length}…`;
-    try {
-      const { suggestions, dataUrl } = await callClaudeForTags(items[i]);
-      totalAdded += await applySuggestions(items[i], suggestions, dataUrl);
-    } catch (err) {
-      console.warn("Auto-tag failed for item", items[i]?.url, err);
-      failures++;
-      if (err?.status === 401 || err?.status === 403) {
-        await save();
-        detectedAutoTagBtn.disabled = false;
-        detectedAutoTagBtn.textContent = wasLabel;
-        showToast(
-          `Stopped: Claude rejected your API key (${err.status}). Open ⚙ Settings and paste a valid key, then try again.`,
-          { kind: "error", ttl: 8000 }
-        );
-        return;
+  let completed = 0;
+  let stopped = false;
+  let stopReason = null;
+
+  const CONCURRENCY = 5;
+  const queue = items.slice();
+  const updateProgress = () => {
+    detectedAutoTagBtn.textContent = `Tagging ${completed}/${items.length}…`;
+  };
+  updateProgress();
+
+  const worker = async () => {
+    while (!stopped) {
+      const item = queue.shift();
+      if (!item) return;
+      let success = false;
+      let attempt = 0;
+      while (!success && !stopped && attempt < 2) {
+        attempt++;
+        try {
+          const { suggestions, dataUrl } = await callClaudeForTags(item);
+          totalAdded += await applySuggestions(item, suggestions, dataUrl);
+          success = true;
+        } catch (err) {
+          if (err?.status === 401 || err?.status === 403) {
+            stopped = true;
+            stopReason =
+              `Stopped: Claude rejected your API key (${err.status}). ` +
+              "Open ⚙ Settings and paste a valid key, then try again.";
+            return;
+          }
+          if (err?.status === 429 && attempt < 2) {
+            // Brief backoff and one retry — workers proceeding in parallel
+            // may have caused a momentary burst.
+            await new Promise((r) => setTimeout(r, 2000));
+            continue;
+          }
+          console.warn("Auto-tag failed for item", item?.url, err);
+          failures++;
+          break;
+        }
       }
-      if (err?.status === 429) {
-        await save();
-        detectedAutoTagBtn.disabled = false;
-        detectedAutoTagBtn.textContent = wasLabel;
-        showToast(
-          `Stopped: Claude returned 429 (rate limited) on photo ${
-            i + 1
-          }/${items.length}. Wait a minute and run Auto‑tag all again — already-tagged photos will be skipped.`,
-          { kind: "error", ttl: 8000 }
-        );
-        return;
-      }
+      completed++;
+      updateProgress();
+      // Persist progressively so closing the panel mid-batch doesn't lose
+      // work. Fire-and-forget so saves don't block the next request.
+      save().catch(() => {});
     }
-    await save();
-    if (i < items.length - 1) await new Promise((r) => setTimeout(r, 250));
-  }
+  };
+
+  const workers = [];
+  const n = Math.min(CONCURRENCY, items.length);
+  for (let i = 0; i < n; i++) workers.push(worker());
+  await Promise.all(workers);
+  // Final save to flush any in-flight writes.
+  await save().catch(() => {});
+
   render();
   if (!lightboxEl.hidden && lightboxItems[lightboxIndex]) {
     renderLightboxPills(lightboxItems[lightboxIndex]);
@@ -2456,6 +2479,10 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
   if (detected.length) showDetected(detected);
   detectedAutoTagBtn.disabled = false;
   detectedAutoTagBtn.textContent = wasLabel;
+  if (stopReason) {
+    showToast(stopReason, { kind: "error", ttl: 8000 });
+    return;
+  }
   showToast(
     `Auto‑tag complete. Added ${totalAdded} tag${
       totalAdded === 1 ? "" : "s"
