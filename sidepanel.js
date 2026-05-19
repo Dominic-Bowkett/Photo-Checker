@@ -400,13 +400,34 @@ async function detectActiveTabAssessment() {
   // Kick off a one-shot section scan in the background. Surfaces any new
   // photos into the Detected pane and stashes latest PDF links under the
   // Latest files card. Best-effort — failures are silent.
-  scanActiveTabSections(tab.id).catch(() => {});
+  scheduleActiveTabScan(tab.id, tab.url || "");
+}
+
+// Debounced auto-scan: chrome.tabs.onActivated and onUpdated can fire many
+// times in quick succession. Coalesce them and skip if we've already scanned
+// the same tab+URL within a short window.
+let _scanTimer = null;
+let _lastScannedKey = "";
+let _lastScannedAt = 0;
+function scheduleActiveTabScan(tabId, url) {
+  const key = `${tabId}|${url || ""}`;
+  const now = Date.now();
+  if (key === _lastScannedKey && now - _lastScannedAt < 10_000) {
+    // Already scanned this exact tab+URL very recently — skip.
+    return;
+  }
+  if (_scanTimer) clearTimeout(_scanTimer);
+  _scanTimer = setTimeout(() => {
+    _scanTimer = null;
+    _lastScannedKey = key;
+    _lastScannedAt = Date.now();
+    scanActiveTabSections(tabId).catch(() => {});
+  }, 400);
 }
 
 async function scanActiveTabSections(tabId) {
-  if (getCurrentPractical()?.keepPhotoUi === false) {
-    // Practical-mode buckets don't use the photo pipeline.
-  }
+  // Don't bother for practical-mode buckets — they hide the photo pipeline.
+  if (shouldHidePhotoUiForPractical()) return;
   let res;
   try {
     res = await chrome.tabs.sendMessage(tabId, { type: "scanEpcSections" });

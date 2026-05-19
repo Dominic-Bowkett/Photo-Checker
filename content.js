@@ -57,16 +57,19 @@
   const findInnermostByText = (needle, root = document.body) => {
     const target = lower(needle);
     if (!target || !root) return null;
-    let best = null;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-    let el;
-    while ((el = walker.nextNode())) {
-      if (el.tagName === "SCRIPT" || el.tagName === "STYLE") continue;
-      const text = lower(el.textContent);
-      if (!text.includes(target)) continue;
-      if (!best || best.contains(el)) best = el;
+    // Walk text nodes only — reading textContent on every element is O(N×D)
+    // and was the main cost when scanning large marking pages.
+    const tw = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = tw.nextNode())) {
+      const parent = n.parentNode;
+      if (!parent) continue;
+      const tag = parent.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE") continue;
+      const t = lower(n.data || "");
+      if (t.includes(target)) return parent;
     }
-    return best;
+    return null;
   };
 
   const climbToContainer = (el) => {
@@ -180,25 +183,26 @@
   const findExactAnchorAfter = (needle, start) => {
     const target = lower(needle);
     if (!target) return null;
-    const all = document.body.querySelectorAll("*");
-    for (const el of all) {
-      if (el.tagName === "SCRIPT" || el.tagName === "STYLE") continue;
-      const t = lower(el.textContent || "");
+    // Walk text nodes only: a heading like <h3>Feedback</h3> has the text
+    // "Feedback" as a direct text-node child, so the parent is the heading
+    // we want. Far cheaper than scanning every element's textContent.
+    const tw = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let n;
+    while ((n = tw.nextNode())) {
+      const parent = n.parentNode;
+      if (!parent) continue;
+      const tag = parent.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE") continue;
+      let t = lower(n.data || "").trim();
       if (!t) continue;
-      if (t !== target && !t.startsWith(target + " ") && t !== target + "*") {
-        // Allow the heading to optionally end with " *" (required-asterisk).
-        if (t.replace(/\s*\*+\s*$/, "") !== target) continue;
-      }
-      // Prefer the innermost element with this text.
-      const hasChildSameText = Array.from(el.children).some(
-        (c) => lower(c.textContent || "") === target
-      );
-      if (hasChildSameText) continue;
+      // Allow a trailing required-asterisk ("Feedback *").
+      t = t.replace(/\s*\*+\s*$/, "");
+      if (t !== target && !t.startsWith(target + " ")) continue;
       if (start) {
-        const pos = start.compareDocumentPosition(el);
+        const pos = start.compareDocumentPosition(parent);
         if (!(pos & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
       }
-      return el;
+      return parent;
     }
     return null;
   };
@@ -439,6 +443,19 @@
     return out;
   };
 
+  const scanEpcSectionsAsync = async (timeoutMs = 3000, intervalMs = 200) => {
+    const start = Date.now();
+    let last = scanEpcSections();
+    while (
+      (!last.anchor || (last.photos.length === 0 && last.latestFiles.length === 0)) &&
+      Date.now() - start < timeoutMs
+    ) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+      last = scanEpcSections();
+    }
+    return last;
+  };
+
   // ---- Close the activity sidebar (Section Navigator) once on load --------
   const tryCloseActivitySidebar = () => {
     const btn = document.querySelector(".designer-preview__sidebar-toggle");
@@ -659,17 +676,17 @@
       return true; // async response
     }
     if (msg?.type === "scanEpcSections") {
-      try {
-        sendResponse(scanEpcSections());
-      } catch (err) {
-        sendResponse({
-          anchor: false,
-          photos: [],
-          latestFiles: [],
-          error: String(err?.message || err),
-        });
-      }
-      return false;
+      scanEpcSectionsAsync()
+        .then(sendResponse)
+        .catch((err) =>
+          sendResponse({
+            anchor: false,
+            photos: [],
+            latestFiles: [],
+            error: String(err?.message || err),
+          })
+        );
+      return true; // async response
     }
   });
 })();
