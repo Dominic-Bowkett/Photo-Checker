@@ -311,8 +311,6 @@ const categoriesEl = $("#categories");
 const categoryTpl = $("#categoryTemplate");
 const photoTpl = $("#photoTemplate");
 
-let suppressNextStorageEvent = false;
-
 async function load() {
   const stored = await chrome.storage.local.get(STORAGE_KEY);
   const existing = stored[STORAGE_KEY];
@@ -397,76 +395,18 @@ async function detectActiveTabAssessment() {
   }
   await save();
   render();
-  // Kick off a one-shot section scan in the background. Surfaces any new
-  // photos into the Detected pane and stashes latest PDF links under the
-  // Latest files card. Best-effort — failures are silent.
-  scheduleActiveTabScan(tab.id, tab.url || "");
 }
 
-// Debounced auto-scan: chrome.tabs.onActivated and onUpdated can fire many
-// times in quick succession. Coalesce them and skip if we've already scanned
-// the same tab+URL within a short window.
-let _scanTimer = null;
-let _lastScannedKey = "";
-let _lastScannedAt = 0;
-function scheduleActiveTabScan(tabId, url) {
-  const key = `${tabId}|${url || ""}`;
-  const now = Date.now();
-  if (key === _lastScannedKey && now - _lastScannedAt < 10_000) {
-    // Already scanned this exact tab+URL very recently — skip.
-    return;
-  }
-  if (_scanTimer) clearTimeout(_scanTimer);
-  _scanTimer = setTimeout(() => {
-    _scanTimer = null;
-    _lastScannedKey = key;
-    _lastScannedAt = Date.now();
-    scanActiveTabSections(tabId).catch(() => {});
-  }, 400);
-}
-
-async function scanActiveTabSections(tabId) {
-  // Don't bother for practical-mode buckets — they hide the photo pipeline.
-  if (shouldHidePhotoUiForPractical()) return;
-  let res;
-  try {
-    res = await chrome.tabs.sendMessage(tabId, { type: "scanEpcSections" });
-  } catch (_) {
-    return;
-  }
-  if (!res?.anchor) return;
-  const bucket = getBucket();
-  // Merge latest files (newest per section wins).
-  const byId = new Map(
-    (bucket.latestFiles || []).map((f) => [f.id, f])
-  );
-  for (const f of res.latestFiles || []) {
-    const existing = byId.get(f.id);
-    if (!existing || (f.timestamp || "") > (existing.timestamp || "")) {
-      byId.set(f.id, f);
-    }
-  }
-  bucket.latestFiles = Array.from(byId.values());
-  // Surface new photos that aren't already filed and aren't already in the
-  // current detected list.
-  const existingUrls = existingPhotoUrls();
-  const detectedUrls = new Set(detected.map((d) => d.url).filter(Boolean));
-  const newPhotos = (res.photos || []).filter(
-    (p) => p.url && !existingUrls.has(p.url) && !detectedUrls.has(p.url)
-  );
-  if (newPhotos.length) {
-    showDetected([...(detected || []), ...newPhotos]);
-  }
-  await save();
-  render();
-}
-
+// Track in-flight saves. While any of our own writes are settling, storage
+// change events are echoes of those writes, not external edits — ignore them
+// so we don't clobber in-memory state mid-operation or trigger redundant
+// re-renders during the parallel auto-tag.
+let pendingSaves = 0;
 async function save() {
-  suppressNextStorageEvent = true;
+  pendingSaves++;
   try {
     await chrome.storage.local.set({ [STORAGE_KEY]: state });
   } catch (err) {
-    suppressNextStorageEvent = false;
     if (/quota/i.test(err?.message || "")) {
       console.error("[EPC] Storage quota exceeded", err);
       alert(
@@ -474,21 +414,30 @@ async function save() {
       );
     }
     throw err;
+  } finally {
+    // Defer the decrement so the echo onChanged event (fired around when the
+    // set resolves) is still covered by pendingSaves > 0.
+    setTimeout(() => {
+      pendingSaves = Math.max(0, pendingSaves - 1);
+    }, 60);
   }
 }
 
-chrome.storage.onChanged.addListener(async (changes, area) => {
+let _externalRenderTimer = null;
+chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes[STORAGE_KEY]) {
-    if (suppressNextStorageEvent) {
-      suppressNextStorageEvent = false;
-    } else {
-      const next = changes[STORAGE_KEY].newValue;
-      if (next?.version === STORAGE_VERSION && next.assessments) {
+  if (changes[STORAGE_KEY] && pendingSaves === 0) {
+    // External edit (e.g. background right-click "Add to EPC photo evidence").
+    // Debounce so a burst of external writes coalesces into one render.
+    const next = changes[STORAGE_KEY].newValue;
+    if (next?.version === STORAGE_VERSION && next.assessments) {
+      if (_externalRenderTimer) clearTimeout(_externalRenderTimer);
+      _externalRenderTimer = setTimeout(() => {
+        _externalRenderTimer = null;
         state.assessments = next.assessments;
         if (next.currentKey) state.currentKey = next.currentKey;
         render();
-      }
+      }, 150);
     }
   }
   if (changes[PENDING_KEY]?.newValue) {
@@ -536,43 +485,11 @@ function render() {
   applyFilters();
   renderFloorplanPinned();
   renderAllPhotosPinned();
-  renderLatestFilesPinned();
   renderNotesPinned();
   renderSiteNotesPinned();
 }
 
 let notesSaveTimer = null;
-
-function renderLatestFilesPinned() {
-  const section = document.getElementById("latestFilesPinned");
-  const list = document.getElementById("latestFilesList");
-  const count = document.getElementById("latestFilesCount");
-  if (!section || !list) return;
-  const bucket = getBucket();
-  const files = (bucket.latestFiles || []).filter((f) => f && f.url);
-  if (!files.length) {
-    section.hidden = true;
-    return;
-  }
-  section.hidden = false;
-  if (count) count.textContent = `(${files.length})`;
-  list.innerHTML = "";
-  for (const f of files) {
-    const li = document.createElement("li");
-    const label = document.createElement("span");
-    label.className = "lf-label";
-    label.textContent = f.label || f.id || "File";
-    const a = document.createElement("a");
-    a.href = f.url;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.textContent = f.title || f.url;
-    a.title = f.url;
-    li.appendChild(label);
-    li.appendChild(a);
-    list.appendChild(li);
-  }
-}
 
 function renderNotesPinned() {
   const section = document.getElementById("notesPinned");
@@ -2907,17 +2824,7 @@ function renderSiteNotesPinned() {
   siteNotesImportBtn.hidden = !settings?.claudeApiKey;
   const tabBtn = document.getElementById("siteNotesTabImport");
   if (tabBtn) tabBtn.hidden = !settings?.claudeApiKey;
-  const fromLatestBtn = document.getElementById("siteNotesFromLatest");
   const bucket = getBucket();
-  const latestWritten = (bucket.latestFiles || []).find(
-    (f) => f.id === "writtenSiteNotes" && f.url
-  );
-  if (fromLatestBtn) {
-    fromLatestBtn.hidden = !settings?.claudeApiKey || !latestWritten;
-    fromLatestBtn.onclick = latestWritten
-      ? () => runSiteNotesImport(latestWritten.url)
-      : null;
-  }
   const sn = bucket.siteNotes;
   const history = bucket.siteNotesHistory || [];
 
