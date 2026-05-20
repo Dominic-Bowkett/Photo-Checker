@@ -423,6 +423,30 @@ async function save() {
   }
 }
 
+// Coalesced save: serialising the whole state (every photo as base64) is
+// expensive, so callers in hot paths (bulk auto-tag, rapid pill toggles)
+// should use this instead of save(). Only one write runs at a time and
+// rapid requests collapse into a single trailing write.
+let _saveQueued = false;
+let _saveRunning = false;
+function queueSave() {
+  _saveQueued = true;
+  void flushSave();
+}
+async function flushSave() {
+  if (_saveRunning || !_saveQueued) return;
+  _saveRunning = true;
+  while (_saveQueued) {
+    _saveQueued = false;
+    try {
+      await save();
+    } catch (_) {
+      /* surfaced inside save() */
+    }
+  }
+  _saveRunning = false;
+}
+
 let _externalRenderTimer = null;
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
@@ -723,6 +747,8 @@ function renderCategory(cat) {
 function renderPhoto(cat, photo) {
   const node = photoTpl.content.firstElementChild.cloneNode(true);
   const img = $("img", node);
+  img.loading = "lazy";
+  img.decoding = "async";
   img.src = photo.dataUrl || photo.url;
   img.alt = photo.alt || "";
   $(".photo-source", node).textContent = photo.pageTitle || photo.url;
@@ -1309,6 +1335,8 @@ function showDetected(photos) {
     li.classList.toggle("is-tagged", !!isExisting);
     li.classList.toggle("is-new", !isExisting);
     const img = document.createElement("img");
+    img.loading = "lazy";
+    img.decoding = "async";
     img.src = p.dataUrl || p.url;
     img.alt = p.alt || "";
     li.appendChild(img);
@@ -2430,7 +2458,7 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
   let stopped = false;
   let stopReason = null;
 
-  const CONCURRENCY = 5;
+  const CONCURRENCY = 3;
   const queue = items.slice();
   const updateProgress = () => {
     detectedAutoTagBtn.textContent = `Tagging ${completed}/${items.length}…`;
@@ -2470,9 +2498,9 @@ detectedAutoTagBtn?.addEventListener("click", async () => {
       }
       completed++;
       updateProgress();
-      // Persist progressively so closing the panel mid-batch doesn't lose
-      // work. Fire-and-forget so saves don't block the next request.
-      save().catch(() => {});
+      // Checkpoint progressively so closing the panel mid-batch doesn't lose
+      // work — coalesced so 5 workers don't serialise the whole state at once.
+      queueSave();
     }
   };
 
@@ -2876,7 +2904,7 @@ function setItemStatus(sn, id, status) {
   if (status === "done") sn.ticks[id] = true;
   else delete sn.ticks[id];
   // Persist in the background — UI has already updated synchronously.
-  save().catch((err) => console.error("[EPC] save failed", err));
+  queueSave();
 }
 
 function renderChecklistItems(sn) {
@@ -3057,6 +3085,8 @@ function buildChecklistDetail(node, item) {
     if (!cat) continue;
     cat.photos.forEach((photo, idx) => {
       const img = document.createElement("img");
+      img.loading = "lazy";
+      img.decoding = "async";
       img.src = photo.dataUrl || photo.url;
       img.alt = photo.alt || "";
       img.title = `${cat.title}`;
